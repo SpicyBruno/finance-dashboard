@@ -8,3 +8,10 @@
 *.jpg
 *.png
 !download (42).jpg
+
+# PWA icons (generated from the money-attraction symbol)
+!icon-192.png
+!icon-512.png
+!icon-maskable-512.png
+!apple-touch-icon.png
+!favicon-32.png
