@@ -1,0 +1,10 @@
+# Local tooling / editor state
+.claude/
+
+# Backup archive
+*.zip
+
+# Unused reference images (keep only the one the dashboard uses)
+*.jpg
+*.png
+!download (42).jpg

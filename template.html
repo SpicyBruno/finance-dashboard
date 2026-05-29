@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prospetto Finanziario Personale — Template</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0e0c;
+    --card: #1a1815;
+    --card-hover: #211e1a;
+    --border: #2d2925;
+    --border-light: #3a342e;
+    --text: #f5f1ea;
+    --text-dim: #a39588;
+    --text-muted: #6b6258;
+    --gold: #c9a961;
+    --gold-dim: #8a7544;
+    --rust: #b85c38;
+    --sage: #6b8e6f;
+    --danger: #c54545;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', sans-serif; -webkit-font-smoothing: antialiased; }
+  input, select, textarea { color: var(--text) !important; color-scheme: dark; }
+  input::placeholder { color: var(--text-muted) !important; }
+  select option { background: var(--card); color: var(--text); }
+  .display-font { font-family: 'Fraunces', serif; font-feature-settings: 'ss01', 'ss02'; }
+  .mono-font { font-family: 'IBM Plex Mono', monospace; }
+
+  .input-cell {
+    background: transparent; border: none; border-bottom: 1px solid var(--border);
+    color: var(--text) !important; padding: 8px 4px;
+    font-family: 'IBM Plex Mono', monospace; font-size: 13px; width: 100%;
+    transition: border-color 0.2s;
+  }
+  .input-cell:focus { outline: none; border-bottom-color: var(--gold); }
+  .input-label {
+    font-family: 'IBM Plex Sans', sans-serif; background: transparent; border: none;
+    color: var(--text) !important; padding: 8px 4px; font-size: 13px; width: 100%;
+    border-bottom: 1px solid transparent;
+  }
+  .input-label:focus { outline: none; border-bottom-color: var(--gold); }
+  .icon-btn {
+    background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+    padding: 6px 10px; cursor: pointer; transition: all 0.2s;
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-family: inherit; letter-spacing: 0.03em;
+  }
+  .icon-btn:hover { border-color: var(--gold); color: var(--gold); }
+  .tab-btn {
+    background: transparent; border: none; color: var(--text-muted);
+    padding: 14px 0; margin-right: 24px; cursor: pointer;
+    font-family: 'Fraunces', serif; font-size: 15px; letter-spacing: 0.02em;
+    border-bottom: 2px solid transparent; transition: all 0.3s; font-style: italic;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
+  .row-delete { opacity: 0; transition: opacity 0.2s; }
+  .data-row:hover .row-delete { opacity: 1; }
+  .recharts-cartesian-axis-tick-value { font-family: 'IBM Plex Mono', monospace; font-size: 11px; }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--gold); color: var(--bg); padding: 10px 24px;
+    font-size: 13px; font-weight: 500; border-radius: 4px;
+    z-index: 1000; animation: toastIn 0.3s ease, toastOut 0.3s ease 2.2s forwards;
+    pointer-events: none;
+  }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(12px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
+
+  @media (max-width: 768px) {
+    header, main, footer, nav { padding-left: 16px !important; padding-right: 16px !important; }
+    .tab-btn { margin-right: 16px; font-size: 13px; padding: 10px 0; }
+    h1 { font-size: 28px !important; }
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
+const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, BarChart, Bar } = Recharts;
+
+/* ── Icons ── */
+const IconDownload = ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>;
+const IconUpload = ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>;
+const IconReset = ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>;
+const IconTrash = ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>;
+const IconPlus = ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>;
+const IconCheck = ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+const IconTrend = ({size=14}) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>;
+
+/* ── Default data (vuoto, generico) ── */
+const DEFAULT_DATA = {
+  profile: { name: 'Il tuo nome', month: 'Mese Anno', notes: '' },
+  income: [
+    { id: 1, label: 'Stipendio netto', amount: 0 },
+    { id: 2, label: 'Entrate extra', amount: 0 }
+  ],
+  fixedExpenses: [
+    { id: 1, label: 'Affitto / mutuo', amount: 0 },
+    { id: 2, label: 'Bollette (luce, gas, internet)', amount: 0 },
+    { id: 3, label: 'Abbonamenti', amount: 0 },
+    { id: 4, label: 'Assicurazioni', amount: 0 },
+    { id: 5, label: 'Trasporti', amount: 0 }
+  ],
+  loans: [
+    { id: 1, label: 'Rata finanziamento 1', amount: 0, monthsLeft: 0 }
+  ],
+  variableExpenses: [
+    { id: 1, label: 'Spesa alimentare', amount: 0 },
+    { id: 2, label: 'Ristoranti / bar', amount: 0 },
+    { id: 3, label: 'Svago / hobby', amount: 0 },
+    { id: 4, label: 'Vestiti / cura personale', amount: 0 }
+  ],
+  investments: [
+    { id: 1, label: 'Investimento 1', current: 0, monthly: 0, type: 'Equity', risk: 'Medio' }
+  ],
+  liquidity: { current: 0, targetEmergency: 0 },
+  goals: [
+    { id: 1, label: 'Obiettivo 1', target: 0, deadline: '' }
+  ],
+  history: []
+};
+
+const STORAGE_KEY = 'finance_dashboard_template';
+const fmt = (n) => new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n || 0);
+const fmtPct = (n) => isFinite(n) ? `${(n * 100).toFixed(1)}%` : '0.0%';
+
+const C = {
+  bg: '#0f0e0c', card: '#1a1815', cardHover: '#211e1a',
+  border: '#2d2925', borderLight: '#3a342e',
+  text: '#f5f1ea', textDim: '#a39588', textMuted: '#6b6258',
+  gold: '#c9a961', goldDim: '#8a7544',
+  rust: '#b85c38', sage: '#6b8e6f', danger: '#c54545',
+  purple: '#8b6f9c', teal: '#6b8e9c'
+};
+
+const PIE_COLORS = [C.gold, C.rust, C.sage, C.purple, C.teal, C.goldDim];
+
+function Toast({ message }) {
+  if (!message) return null;
+  return <div className="toast">{message}</div>;
+}
+
+/* ── Main App ── */
+function FinanceDashboard() {
+  const [data, setData] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      return saved ? JSON.parse(saved) : DEFAULT_DATA;
+    } catch { return DEFAULT_DATA; }
+  });
+  const [activeTab, setActiveTab] = useState('overview');
+  const [toast, setToast] = useState('');
+  const fileInputRef = useRef(null);
+
+  const showToast = useCallback((msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 2500);
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+  }, [data]);
+
+  const totals = useMemo(() => {
+    const totalIncome = data.income.reduce((s, i) => s + Number(i.amount || 0), 0);
+    const totalFixed = data.fixedExpenses.reduce((s, i) => s + Number(i.amount || 0), 0);
+    const totalLoans = data.loans.reduce((s, i) => s + Number(i.amount || 0), 0);
+    const totalVariable = data.variableExpenses.reduce((s, i) => s + Number(i.amount || 0), 0);
+    const totalInvestMonthly = data.investments.reduce((s, i) => s + Number(i.monthly || 0), 0);
+    const totalInvestCurrent = data.investments.reduce((s, i) => s + Number(i.current || 0), 0);
+    const totalOutflow = totalFixed + totalLoans + totalVariable + totalInvestMonthly;
+    const monthlySaving = totalIncome - totalOutflow;
+    const savingRate = totalIncome > 0 ? monthlySaving / totalIncome : 0;
+    const netWorth = (data.liquidity.current || 0) + totalInvestCurrent;
+    const essentialExpenses = totalFixed + totalLoans + totalVariable;
+    const emergencyMonths = essentialExpenses > 0 ? (data.liquidity.current || 0) / essentialExpenses : 0;
+    return { totalIncome, totalFixed, totalLoans, totalVariable, totalInvestMonthly, totalInvestCurrent, totalOutflow, monthlySaving, savingRate, netWorth, emergencyMonths, essentialExpenses };
+  }, [data]);
+
+  const projection = useMemo(() => {
+    const months = 60;
+    const result = [];
+    let liq = data.liquidity.current;
+    let investments = data.investments.map(i => ({ ...i }));
+    const loans = data.loans.map(l => ({ ...l }));
+    const annualReturns = { 'Pensione': 0.04, 'Cripto': 0.12, 'Equity': 0.07, 'Bond': 0.03, 'Liquidita': 0.02 };
+    for (let m = 0; m <= months; m++) {
+      const totalInv = investments.reduce((s, i) => s + i.current, 0);
+      result.push({ month: m, liquidity: Math.round(liq), investments: Math.round(totalInv), netWorth: Math.round(liq + totalInv) });
+      if (m === months) break;
+      const activeLoans = loans.filter(l => l.monthsLeft > m).reduce((s, l) => s + Number(l.amount || 0), 0);
+      const saving = totals.totalIncome - totals.totalFixed - activeLoans - totals.totalVariable - totals.totalInvestMonthly;
+      liq += saving;
+      investments = investments.map(inv => {
+        const annual = annualReturns[inv.type] ?? 0.05;
+        const monthlyRate = Math.pow(1 + annual, 1 / 12) - 1;
+        return { ...inv, current: inv.current * (1 + monthlyRate) + Number(inv.monthly || 0) };
+      });
+    }
+    return result;
+  }, [data, totals]);
+
+  const expenseBreakdown = useMemo(() => {
+    const items = [];
+    data.fixedExpenses.forEach(e => items.push({ name: e.label, value: Number(e.amount || 0) }));
+    data.loans.forEach(e => items.push({ name: e.label, value: Number(e.amount || 0) }));
+    data.variableExpenses.forEach(e => items.push({ name: e.label, value: Number(e.amount || 0) }));
+    return items.filter(i => i.value > 0);
+  }, [data]);
+
+  const updateField = useCallback((section, id, field, value) => {
+    setData(prev => ({
+      ...prev,
+      [section]: prev[section].map(item =>
+        item.id === id ? { ...item, [field]: ['label', 'type', 'risk', 'deadline'].includes(field) ? value : Number(value) || 0 } : item
+      )
+    }));
+  }, []);
+
+  const addItem = useCallback((section, template) => {
+    setData(prev => {
+      const newId = Math.max(0, ...prev[section].map(i => i.id)) + 1;
+      return { ...prev, [section]: [...prev[section], { id: newId, ...template }] };
+    });
+  }, []);
+
+  const removeItem = useCallback((section, id) => {
+    setData(prev => ({ ...prev, [section]: prev[section].filter(i => i.id !== id) }));
+  }, []);
+
+  const updateLiquidity = useCallback((field, val) => {
+    setData(prev => ({ ...prev, liquidity: { ...prev.liquidity, [field]: Number(val) || 0 } }));
+  }, []);
+
+  const exportJSON = useCallback(() => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `budget_${data.profile.month.replace(/\s/g, '_')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Dati esportati con successo');
+  }, [data, showToast]);
+
+  const importJSON = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result);
+        if (parsed.income && parsed.fixedExpenses) {
+          setData(parsed);
+          showToast('Dati importati con successo');
+        } else {
+          showToast('Formato JSON non riconosciuto');
+        }
+      } catch { showToast('File JSON non valido'); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }, [showToast]);
+
+  const resetData = useCallback(() => {
+    if (confirm('Sicuro di voler cancellare tutti i dati e ricominciare da zero?')) {
+      setData(DEFAULT_DATA);
+      showToast('Dati ripristinati');
+    }
+  }, [showToast]);
+
+  const saveSnapshot = useCallback(() => {
+    const snapshot = {
+      date: new Date().toISOString().slice(0, 7),
+      netWorth: totals.netWorth,
+      income: totals.totalIncome,
+      saving: totals.monthlySaving,
+      liquidity: data.liquidity.current,
+      investments: totals.totalInvestCurrent
+    };
+    setData(prev => ({
+      ...prev,
+      history: [...(prev.history || []).filter(h => h.date !== snapshot.date), snapshot].sort((a, b) => a.date.localeCompare(b.date))
+    }));
+    showToast('Snapshot mese salvato');
+  }, [totals, data.liquidity.current, showToast]);
+
+  const tabs = [
+    { id: 'overview', label: 'Quadro' },
+    { id: 'income', label: 'Entrate & Spese' },
+    { id: 'investments', label: 'Investimenti' },
+    { id: 'projection', label: 'Proiezioni' },
+    { id: 'goals', label: 'Obiettivi' },
+    { id: 'history', label: 'Storico' }
+  ];
+
+  const barData = [
+    { name: 'Fisse', value: totals.totalFixed, fill: C.rust },
+    { name: 'Rate', value: totals.totalLoans, fill: C.goldDim },
+    { name: 'Variabili', value: totals.totalVariable, fill: C.purple },
+    { name: 'Investim.', value: totals.totalInvestMonthly, fill: C.sage },
+    { name: 'Risparmio', value: Math.max(0, totals.monthlySaving), fill: C.gold }
+  ];
+
+  const tooltipStyle = { contentStyle: { background: C.bg, border: `1px solid ${C.gold}`, fontFamily: 'IBM Plex Mono', color: C.text }, itemStyle: { color: C.textDim }, labelStyle: { color: C.gold } };
+  const tooltipStyleSm = { contentStyle: { background: C.bg, border: `1px solid ${C.gold}`, fontFamily: 'IBM Plex Mono', fontSize: '12px', color: C.text }, itemStyle: { color: C.textDim }, labelStyle: { color: C.gold } };
+
+  return (
+    <div style={{ background: C.bg, color: C.text, minHeight: '100vh', fontFamily: '"IBM Plex Sans", system-ui, sans-serif', paddingBottom: '60px' }}>
+      <Toast message={toast} />
+
+      {/* ── Header ── */}
+      <header style={{ borderBottom: `1px solid ${C.border}`, padding: '32px 48px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: '20px' }}>
+        <div>
+          <div style={{ fontSize: '11px', letterSpacing: '0.25em', color: C.gold, textTransform: 'uppercase', marginBottom: '8px' }}>&#9670; Prospetto Finanziario Personale</div>
+          <h1 className="display-font" style={{ fontSize: '42px', fontWeight: 400, letterSpacing: '-0.02em', lineHeight: 1 }}>
+            <span style={{ fontStyle: 'italic' }}>Il tuo</span> Quadro
+          </h1>
+          <div style={{ marginTop: '12px', color: C.textDim, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <input type="text" value={data.profile.name} onChange={e => setData(p => ({ ...p, profile: { ...p.profile, name: e.target.value } }))} className="input-label" style={{ width: '160px', display: 'inline-block', borderBottom: `1px dotted ${C.border}` }} placeholder="Il tuo nome" />
+            <span style={{ color: C.textMuted }}>·</span>
+            <input type="text" value={data.profile.month} onChange={e => setData(p => ({ ...p, profile: { ...p.profile, month: e.target.value } }))} className="input-label" style={{ width: '140px', display: 'inline-block', borderBottom: `1px dotted ${C.border}` }} placeholder="Mese Anno" />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button className="icon-btn" onClick={saveSnapshot}><IconCheck /> Snapshot</button>
+          <button className="icon-btn" onClick={exportJSON}><IconDownload /> Esporta</button>
+          <label className="icon-btn" style={{ cursor: 'pointer' }}>
+            <IconUpload /> Importa
+            <input ref={fileInputRef} type="file" accept="application/json" onChange={importJSON} style={{ display: 'none' }} />
+          </label>
+          <button className="icon-btn" onClick={resetData}><IconReset /> Reset</button>
+        </div>
+      </header>
+
+      {/* ── Navigation ── */}
+      <nav style={{ padding: '0 48px', borderBottom: `1px solid ${C.border}`, display: 'flex', flexWrap: 'wrap', overflowX: 'auto' }}>
+        {tabs.map(t => (
+          <button key={t.id} className={`tab-btn ${activeTab === t.id ? 'active' : ''}`} onClick={() => setActiveTab(t.id)}>{t.label}</button>
+        ))}
+      </nav>
+
+      <main style={{ padding: '40px 48px' }}>
+
+        {/* ════════════════ OVERVIEW ════════════════ */}
+        {activeTab === 'overview' && (
+          <div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1px', background: C.border, border: `1px solid ${C.border}`, marginBottom: '48px' }}>
+              {[
+                { label: 'Patrimonio netto', value: fmt(totals.netWorth), accent: C.gold, sub: 'liquidita + investimenti' },
+                { label: 'Entrate mese', value: fmt(totals.totalIncome), accent: C.sage, sub: `${data.income.length} fonti` },
+                { label: 'Uscite totali mese', value: fmt(totals.totalOutflow), accent: C.rust, sub: totals.totalIncome > 0 ? `${fmtPct(totals.totalOutflow / totals.totalIncome)} del netto` : 'inserisci entrate' },
+                { label: 'Risparmio mese', value: fmt(totals.monthlySaving), accent: totals.monthlySaving >= 0 ? C.sage : C.danger, sub: `tasso ${fmtPct(totals.savingRate)}` },
+                { label: 'Mesi emergenza', value: totals.emergencyMonths.toFixed(1), accent: totals.emergencyMonths >= 6 ? C.sage : C.rust, sub: 'target >= 6 mesi' }
+              ].map((kpi, i) => (
+                <div key={i} style={{ background: C.card, padding: '24px 20px' }}>
+                  <div style={{ fontSize: '10px', letterSpacing: '0.2em', textTransform: 'uppercase', color: C.textMuted, marginBottom: '12px' }}>{kpi.label}</div>
+                  <div className="display-font" style={{ fontSize: '28px', fontWeight: 400, color: kpi.accent, lineHeight: 1, marginBottom: '6px' }}>{kpi.value}</div>
+                  <div style={{ fontSize: '11px', color: C.textDim, fontStyle: 'italic' }}>{kpi.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '32px', marginBottom: '40px' }}>
+              <div style={{ background: C.card, padding: '28px', border: `1px solid ${C.border}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '24px' }}>
+                  <h3 className="display-font" style={{ margin: 0, fontSize: '18px', fontWeight: 400, fontStyle: 'italic' }}>Allocazione flusso mensile</h3>
+                  <span className="mono-font" style={{ fontSize: '11px', color: C.textMuted }}>su {fmt(totals.totalIncome)}</span>
+                </div>
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={barData} layout="vertical" margin={{ left: 10, right: 30 }}>
+                    <CartesianGrid strokeDasharray="2 4" stroke={C.border} horizontal={false} />
+                    <XAxis type="number" stroke={C.textMuted} tickFormatter={v => `${v}\u20AC`} />
+                    <YAxis type="category" dataKey="name" stroke={C.textMuted} width={80} />
+                    <Tooltip {...tooltipStyle} formatter={(v) => fmt(v)} />
+                    <Bar dataKey="value" radius={[0, 3, 3, 0]}>
+                      {barData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div style={{ background: C.card, padding: '28px', border: `1px solid ${C.border}` }}>
+                <h3 className="display-font" style={{ margin: '0 0 24px', fontSize: '18px', fontWeight: 400, fontStyle: 'italic' }}>Composizione patrimoniale</h3>
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart>
+                    <Pie
+                      data={[{ name: 'Liquidita', value: data.liquidity.current || 0 }, ...data.investments.map(i => ({ name: i.label, value: i.current || 0 }))].filter(d => d.value > 0)}
+                      dataKey="value" cx="50%" cy="50%" innerRadius={50} outerRadius={90} paddingAngle={2}
+                    >
+                      {[C.textDim, ...PIE_COLORS].map((c, i) => <Cell key={i} fill={c} />)}
+                    </Pie>
+                    <Tooltip {...tooltipStyle} formatter={(v) => fmt(v)} />
+                    <Legend wrapperStyle={{ fontSize: '11px', fontFamily: 'IBM Plex Sans' }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '32px', marginBottom: '40px' }}>
+              <div style={{ background: C.card, padding: '28px', border: `1px solid ${C.border}` }}>
+                <h3 className="display-font" style={{ margin: '0 0 24px', fontSize: '18px', fontWeight: 400, fontStyle: 'italic' }}>Dettaglio spese mensili</h3>
+                {expenseBreakdown.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie data={expenseBreakdown} dataKey="value" cx="50%" cy="50%" outerRadius={100} paddingAngle={1} label={({name, percent}) => `${name.slice(0, 12)} ${(percent * 100).toFixed(0)}%`} labelLine={false}>
+                        {expenseBreakdown.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip {...tooltipStyle} formatter={(v) => fmt(v)} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.textMuted, fontStyle: 'italic' }}>Inserisci le spese per vedere il grafico</div>
+                )}
+              </div>
+
+              <div style={{ background: C.card, padding: '28px', border: `1px solid ${C.border}` }}>
+                <h3 className="display-font" style={{ margin: '0 0 24px', fontSize: '18px', fontWeight: 400, fontStyle: 'italic' }}>Patrimonio netto — prossimi 5 anni</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={projection.filter((_, i) => i % 3 === 0)}>
+                    <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
+                    <XAxis dataKey="month" stroke={C.textMuted} tickFormatter={v => v % 12 === 0 ? `${v / 12}a` : ''} />
+                    <YAxis stroke={C.textMuted} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                    <Tooltip {...tooltipStyleSm} formatter={(v) => fmt(v)} labelFormatter={(l) => `Mese ${l}`} />
+                    <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={2} name="Patrimonio" dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div style={{ background: C.card, border: `1px solid ${C.border}`, padding: '32px' }}>
+              <h3 className="display-font" style={{ margin: '0 0 20px', fontSize: '22px', fontWeight: 400 }}>
+                <span style={{ fontStyle: 'italic' }}>Diagnosi</span> rapida
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '20px' }}>
+                <DiagnosticItem ok={totals.savingRate >= 0.1} title="Tasso di risparmio"
+                  text={totals.totalIncome > 0 ? `${fmtPct(totals.savingRate)} del netto. ${totals.savingRate >= 0.2 ? 'Eccellente.' : totals.savingRate >= 0.1 ? 'In linea, migliorabile.' : 'Sotto soglia: rivedi le spese.'}` : 'Inserisci le entrate per la diagnosi.'} />
+                <DiagnosticItem ok={totals.emergencyMonths >= 6} title="Fondo emergenza"
+                  text={totals.essentialExpenses > 0 ? `${totals.emergencyMonths.toFixed(1)} mesi di copertura. ${totals.emergencyMonths >= 6 ? 'Adeguato.' : `Mancano ${fmt(Math.max(0, (data.liquidity.targetEmergency || 0) - data.liquidity.current))} al target.`}` : 'Inserisci spese e liquidita per la diagnosi.'} />
+                <DiagnosticItem ok={totals.totalIncome > 0 && totals.totalLoans / totals.totalIncome < 0.15} title="Peso rate"
+                  text={totals.totalIncome > 0 ? `Le rate pesano ${fmtPct(totals.totalLoans / totals.totalIncome)} del netto. ${totals.totalLoans === 0 ? 'Nessun debito attivo.' : 'Monitora la scadenza delle rate.'}` : 'Inserisci le entrate per la diagnosi.'} />
+                <DiagnosticItem ok={totals.totalIncome > 0 && totals.totalInvestMonthly / totals.totalIncome >= 0.1} title="Investimenti"
+                  text={totals.totalIncome > 0 ? `${fmtPct(totals.totalInvestMonthly / totals.totalIncome)} del netto investito. ${totals.totalInvestMonthly / totals.totalIncome >= 0.15 ? 'Ottimo.' : 'Valuta di aumentare gli investimenti.'}` : 'Inserisci le entrate per la diagnosi.'} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ════════════════ INCOME & EXPENSES ════════════════ */}
+        {activeTab === 'income' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '32px' }}>
+            <Section title="Entrate" total={totals.totalIncome} accent={C.sage}>
+              <DataTable items={data.income} section="income" onUpdate={updateField} onRemove={removeItem} fields={['label', 'amount']} />
+              <AddBtn onClick={() => addItem('income', { label: 'Nuova entrata', amount: 0 })} />
+            </Section>
+
+            <Section title="Liquidita & Cuscinetto" accent={C.gold}>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ fontSize: '11px', color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Liquidita attuale (conti + depositi)</label>
+                <input type="number" value={data.liquidity.current} onChange={e => updateLiquidity('current', e.target.value)} className="input-cell" style={{ fontSize: '24px', marginTop: '6px' }} placeholder="0" />
+              </div>
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ fontSize: '11px', color: C.textMuted, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Target fondo emergenza</label>
+                <input type="number" value={data.liquidity.targetEmergency} onChange={e => updateLiquidity('targetEmergency', e.target.value)} className="input-cell" style={{ fontSize: '24px', marginTop: '6px' }} placeholder="0" />
+              </div>
+              {data.liquidity.targetEmergency > 0 && (
+                <div>
+                  <div style={{ height: '8px', background: C.bg, borderRadius: '4px', overflow: 'hidden', marginTop: '24px' }}>
+                    <div style={{ height: '100%', width: `${Math.min(100, (data.liquidity.current / data.liquidity.targetEmergency) * 100)}%`, background: data.liquidity.current >= data.liquidity.targetEmergency ? C.sage : C.gold, transition: 'width 0.4s' }} />
+                  </div>
+                  <div className="mono-font" style={{ fontSize: '11px', color: C.textDim, marginTop: '8px' }}>{fmtPct(data.liquidity.current / data.liquidity.targetEmergency)} raggiunto — mancano {fmt(Math.max(0, data.liquidity.targetEmergency - data.liquidity.current))}</div>
+                </div>
+              )}
+            </Section>
+
+            <Section title="Spese fisse" total={totals.totalFixed} accent={C.rust}>
+              <DataTable items={data.fixedExpenses} section="fixedExpenses" onUpdate={updateField} onRemove={removeItem} fields={['label', 'amount']} />
+              <AddBtn onClick={() => addItem('fixedExpenses', { label: 'Nuova spesa fissa', amount: 0 })} />
+            </Section>
+
+            <Section title="Spese variabili" total={totals.totalVariable} accent={C.purple}>
+              <DataTable items={data.variableExpenses} section="variableExpenses" onUpdate={updateField} onRemove={removeItem} fields={['label', 'amount']} />
+              <AddBtn onClick={() => addItem('variableExpenses', { label: 'Nuova spesa variabile', amount: 0 })} />
+            </Section>
+
+            <Section title="Rate & Finanziamenti" total={totals.totalLoans} accent={C.goldDim} fullWidth>
+              <DataTable items={data.loans} section="loans" onUpdate={updateField} onRemove={removeItem} fields={['label', 'amount', 'monthsLeft']} fieldLabels={{ label: 'Descrizione', amount: 'Rata mensile', monthsLeft: 'Mesi residui' }} />
+              <AddBtn onClick={() => addItem('loans', { label: 'Nuovo finanziamento', amount: 0, monthsLeft: 12 })} />
+            </Section>
+          </div>
+        )}
+
+        {/* ════════════════ INVESTMENTS ════════════════ */}
+        {activeTab === 'investments' && (
+          <div>
+            <Section title="Posizioni di investimento" accent={C.gold}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', minWidth: '600px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                      {['Posizione', 'Valore attuale', 'PAC mensile', 'Tipo', 'Rischio', ''].map(h => (
+                        <th key={h} style={{ textAlign: 'left', padding: '12px 8px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.15em', color: C.textMuted, fontWeight: 500 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.investments.map(inv => (
+                      <tr key={inv.id} className="data-row" style={{ borderBottom: `1px solid ${C.border}` }}>
+                        <td style={{ padding: '4px 8px' }}><input className="input-label" value={inv.label} onChange={e => updateField('investments', inv.id, 'label', e.target.value)} /></td>
+                        <td style={{ padding: '4px 8px' }}><input type="number" className="input-cell" value={inv.current} onChange={e => updateField('investments', inv.id, 'current', e.target.value)} /></td>
+                        <td style={{ padding: '4px 8px' }}><input type="number" className="input-cell" value={inv.monthly} onChange={e => updateField('investments', inv.id, 'monthly', e.target.value)} /></td>
+                        <td style={{ padding: '4px 8px' }}>
+                          <select value={inv.type} onChange={e => updateField('investments', inv.id, 'type', e.target.value)} className="input-cell" style={{ background: C.card }}>
+                            <option>Equity</option><option>Pensione</option><option>Cripto</option><option>Bond</option><option>Liquidita</option>
+                          </select>
+                        </td>
+                        <td style={{ padding: '4px 8px' }}><input className="input-label mono-font" value={inv.risk} onChange={e => updateField('investments', inv.id, 'risk', e.target.value)} style={{ fontSize: '12px' }} /></td>
+                        <td style={{ padding: '4px 8px' }}>
+                          <button className="row-delete" onClick={() => removeItem('investments', inv.id)} style={{ background: 'none', border: 'none', color: C.danger, cursor: 'pointer' }}><IconTrash /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td style={{ padding: '16px 8px', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.15em', color: C.textMuted }}>Totali</td>
+                      <td className="mono-font" style={{ padding: '16px 8px', color: C.gold, fontSize: '15px' }}>{fmt(totals.totalInvestCurrent)}</td>
+                      <td className="mono-font" style={{ padding: '16px 8px', color: C.gold, fontSize: '15px' }}>{fmt(totals.totalInvestMonthly)}/m</td>
+                      <td colSpan={3}></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <AddBtn onClick={() => addItem('investments', { label: 'Nuova posizione', current: 0, monthly: 0, type: 'Equity', risk: 'Medio' })} />
+            </Section>
+          </div>
+        )}
+
+        {/* ════════════════ PROJECTION ════════════════ */}
+        {activeTab === 'projection' && (
+          <div>
+            <Section title="Proiezione patrimoniale a 60 mesi" accent={C.gold}>
+              <p style={{ fontSize: '12px', color: C.textDim, marginTop: 0, marginBottom: '20px', fontStyle: 'italic' }}>
+                Ipotesi rendimenti annui: Equity 7%, Pensione 4% (netto costi), Cripto 12% (alta volatilita), Bond 3%. Le rate decrescono in base ai mesi residui.
+              </p>
+              <ResponsiveContainer width="100%" height={400}>
+                <LineChart data={projection}>
+                  <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
+                  <XAxis dataKey="month" stroke={C.textMuted} tickFormatter={v => v % 12 === 0 ? `${v / 12}a` : ''} />
+                  <YAxis stroke={C.textMuted} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip {...tooltipStyleSm} formatter={(v) => fmt(v)} labelFormatter={(l) => `Mese ${l}`} />
+                  <Legend wrapperStyle={{ fontSize: '12px', fontFamily: 'IBM Plex Sans' }} />
+                  <Line type="monotone" dataKey="liquidity" stroke={C.textDim} strokeWidth={2} name="Liquidita" dot={false} />
+                  <Line type="monotone" dataKey="investments" stroke={C.rust} strokeWidth={2} name="Investimenti" dot={false} />
+                  <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={3} name="Patrimonio totale" dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </Section>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1px', background: C.border, marginTop: '32px', border: `1px solid ${C.border}` }}>
+              {[12, 24, 36, 60].map(m => {
+                const point = projection[m];
+                const growth = point && totals.netWorth > 0 ? ((point.netWorth - totals.netWorth) / totals.netWorth) : 0;
+                return (
+                  <div key={m} style={{ background: C.card, padding: '24px' }}>
+                    <div style={{ fontSize: '10px', letterSpacing: '0.2em', textTransform: 'uppercase', color: C.textMuted, marginBottom: '10px' }}>
+                      Tra {m / 12} {m === 12 ? 'anno' : 'anni'}
+                    </div>
+                    <div className="display-font" style={{ fontSize: '26px', color: C.gold, lineHeight: 1 }}>{point ? fmt(point.netWorth) : '—'}</div>
+                    {growth !== 0 && <div className="mono-font" style={{ fontSize: '11px', color: C.sage, marginTop: '8px' }}>+{fmtPct(growth)}</div>}
+                    {point && <div className="mono-font" style={{ fontSize: '11px', color: C.textDim, marginTop: '8px' }}>
+                      Liq: {fmt(point.liquidity)}<br />
+                      Inv: {fmt(point.investments)}
+                    </div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ════════════════ GOALS ════════════════ */}
+        {activeTab === 'goals' && (
+          <Section title="Obiettivi finanziari" accent={C.gold}>
+            {data.goals.map(goal => {
+              const progress = goal.target > 0 ? Math.min(1, totals.netWorth / goal.target) : 0;
+              const remaining = Math.max(0, (goal.target || 0) - totals.netWorth);
+              const monthsToGoal = totals.monthlySaving > 0 ? Math.ceil(remaining / totals.monthlySaving) : Infinity;
+              return (
+                <div key={goal.id} className="data-row" style={{ padding: '20px 0', borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: '16px', alignItems: 'center' }}>
+                    <input className="input-label" value={goal.label} onChange={e => updateField('goals', goal.id, 'label', e.target.value)} style={{ fontSize: '15px' }} placeholder="Nome obiettivo" />
+                    <input type="number" className="input-cell" value={goal.target} onChange={e => updateField('goals', goal.id, 'target', e.target.value)} placeholder="Target" />
+                    <input type="text" className="input-cell" value={goal.deadline} onChange={e => updateField('goals', goal.id, 'deadline', e.target.value)} placeholder="YYYY-MM" />
+                    <button className="row-delete" onClick={() => removeItem('goals', goal.id)} style={{ background: 'none', border: 'none', color: C.danger, cursor: 'pointer' }}><IconTrash /></button>
+                  </div>
+                  {goal.target > 0 && (
+                    <div style={{ marginTop: '12px' }}>
+                      <div style={{ height: '6px', background: C.bg, borderRadius: '3px', overflow: 'hidden' }}>
+                        <div style={{ height: '100%', width: `${progress * 100}%`, background: progress >= 1 ? C.sage : C.gold, transition: 'width 0.4s', borderRadius: '3px' }} />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px' }}>
+                        <span className="mono-font" style={{ fontSize: '10px', color: C.textDim }}>{fmtPct(progress)} — mancano {fmt(remaining)}</span>
+                        <span className="mono-font" style={{ fontSize: '10px', color: progress >= 1 ? C.sage : C.textMuted }}>
+                          {progress >= 1 ? 'Raggiunto!' : monthsToGoal < Infinity ? `~${monthsToGoal} mesi al ritmo attuale` : 'risparmio insufficiente'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <AddBtn onClick={() => addItem('goals', { label: 'Nuovo obiettivo', target: 0, deadline: '' })} />
+          </Section>
+        )}
+
+        {/* ════════════════ HISTORY ════════════════ */}
+        {activeTab === 'history' && (
+          <div>
+            <Section title="Storico mensile" accent={C.gold}>
+              <p style={{ fontSize: '12px', color: C.textDim, marginTop: 0, marginBottom: '20px', fontStyle: 'italic' }}>
+                Usa il pulsante "Snapshot" nell'header per salvare lo stato del mese corrente. Ogni mese viene salvato una sola volta (sovrascrive se gia presente).
+              </p>
+              {(data.history || []).length === 0 ? (
+                <div style={{ padding: '40px', textAlign: 'center', color: C.textMuted }}>
+                  <IconTrend size={32} />
+                  <p style={{ marginTop: '12px' }}>Nessuno snapshot salvato. Clicca "Snapshot" nell'header per iniziare a tracciare il tuo andamento.</p>
+                </div>
+              ) : (
+                <div>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={data.history}>
+                      <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
+                      <XAxis dataKey="date" stroke={C.textMuted} />
+                      <YAxis stroke={C.textMuted} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
+                      <Tooltip {...tooltipStyleSm} formatter={(v) => fmt(v)} />
+                      <Legend wrapperStyle={{ fontSize: '12px' }} />
+                      <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={2} name="Patrimonio" dot={{ r: 4 }} />
+                      <Line type="monotone" dataKey="liquidity" stroke={C.textDim} strokeWidth={1.5} name="Liquidita" dot={{ r: 3 }} />
+                      <Line type="monotone" dataKey="investments" stroke={C.sage} strokeWidth={1.5} name="Investimenti" dot={{ r: 3 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+
+                  <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '24px', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                        {['Mese', 'Patrimonio', 'Liquidita', 'Investimenti', 'Entrate', 'Risparmio'].map(h => (
+                          <th key={h} style={{ textAlign: 'left', padding: '10px 8px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.15em', color: C.textMuted }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.history.map((h) => (
+                        <tr key={h.date} style={{ borderBottom: `1px solid ${C.border}` }}>
+                          <td className="mono-font" style={{ padding: '10px 8px' }}>{h.date}</td>
+                          <td className="mono-font" style={{ padding: '10px 8px', color: C.gold }}>{fmt(h.netWorth)}</td>
+                          <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.liquidity)}</td>
+                          <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.investments)}</td>
+                          <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.income)}</td>
+                          <td className="mono-font" style={{ padding: '10px 8px', color: h.saving >= 0 ? C.sage : C.danger }}>{fmt(h.saving)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Section>
+          </div>
+        )}
+      </main>
+
+      <footer style={{ padding: '32px 48px', borderTop: `1px solid ${C.border}`, fontSize: '11px', color: C.textMuted, fontStyle: 'italic', textAlign: 'center' }}>
+        I dati sono salvati nel browser (localStorage). Esporta il JSON per conservarne una copia o condividerla.
+      </footer>
+    </div>
+  );
+}
+
+/* ── Reusable Components ── */
+function Section({ title, total, children, accent, fullWidth }) {
+  return (
+    <section style={{ background: C.card, border: `1px solid ${C.border}`, padding: '28px', gridColumn: fullWidth ? '1 / -1' : 'auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '20px', borderBottom: `1px solid ${C.border}`, paddingBottom: '14px' }}>
+        <h3 className="display-font" style={{ margin: 0, fontSize: '20px', fontWeight: 400 }}>
+          <span style={{ color: accent, marginRight: '8px' }}>&#9670;</span>
+          <span style={{ fontStyle: 'italic' }}>{title}</span>
+        </h3>
+        {total !== undefined && <span className="mono-font" style={{ fontSize: '15px', color: accent }}>{fmt(total)}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function DataTable({ items, section, onUpdate, onRemove, fields, fieldLabels }) {
+  return (
+    <div>
+      {items.map(item => (
+        <div key={item.id} className="data-row" style={{ display: 'grid', gridTemplateColumns: fields.length === 2 ? '2fr 1fr auto' : `2fr repeat(${fields.length - 1}, 1fr) auto`, gap: '12px', alignItems: 'center', padding: '4px 0' }}>
+          {fields.map(f => (
+            <input key={f} type={f === 'label' ? 'text' : 'number'} value={item[f]} onChange={e => onUpdate(section, item.id, f, e.target.value)} className={f === 'label' ? 'input-label' : 'input-cell'} placeholder={fieldLabels?.[f] || f} style={f !== 'label' ? { textAlign: 'right' } : {}} />
+          ))}
+          <button className="row-delete" onClick={() => onRemove(section, item.id)} style={{ background: 'none', border: 'none', color: C.danger, cursor: 'pointer', padding: '4px' }}><IconTrash /></button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AddBtn({ onClick }) {
+  return (
+    <button onClick={onClick} style={{ marginTop: '16px', background: 'transparent', border: `1px dashed ${C.border}`, color: C.textMuted, padding: '10px 16px', cursor: 'pointer', fontSize: '11px', fontFamily: 'inherit', letterSpacing: '0.1em', textTransform: 'uppercase', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: 'all 0.2s' }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = C.gold; e.currentTarget.style.color = C.gold; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textMuted; }}
+    >
+      <IconPlus /> Aggiungi voce
+    </button>
+  );
+}
+
+function DiagnosticItem({ ok, title, text }) {
+  return (
+    <div style={{ borderLeft: `2px solid ${ok ? C.sage : C.rust}`, paddingLeft: '16px' }}>
+      <div style={{ fontSize: '11px', letterSpacing: '0.15em', textTransform: 'uppercase', color: ok ? C.sage : C.rust, marginBottom: '6px' }}>{title}</div>
+      <div style={{ fontSize: '13px', color: C.textDim, lineHeight: 1.5 }}>{text}</div>
+    </div>
+  );
+}
+
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return React.createElement('div', { style: { padding: '40px', color: '#c54545', fontFamily: 'monospace', background: '#0f0e0c', minHeight: '100vh' } },
+        React.createElement('h2', null, 'Errore di rendering'),
+        React.createElement('pre', { style: { whiteSpace: 'pre-wrap', color: '#f5f1ea', marginTop: '16px' } }, this.state.error.toString())
+      );
+    }
+    return this.props.children;
+  }
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <ErrorBoundary><FinanceDashboard /></ErrorBoundary>
+);
+</script>
+</body>
+</html>
