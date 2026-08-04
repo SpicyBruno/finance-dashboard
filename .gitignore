@@ -1,5 +1,10 @@
 # Local tooling / editor state
 .claude/
+.playwright-mcp/
+
+# Dipendenze di build (Babel). vendor/ invece va committato: sono le librerie
+# che il service worker mette in cache perché la PWA funzioni offline.
+node_modules/
 
 # Backup archive
 *.zip

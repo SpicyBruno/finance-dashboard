@@ -1,0 +1,26 @@
+{
+  "name": "prospetto-finanziario",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Dashboard finanziaria personale — PWA offline-first, dati in localStorage",
+  "scripts": {
+    "build": "babel src/app.jsx --out-file app.js",
+    "dev": "babel src/app.jsx --out-file app.js --watch",
+    "serve": "python -m http.server 8899 --bind 127.0.0.1"
+  },
+  "babel": {
+    "presets": [
+      [
+        "@babel/preset-react",
+        {
+          "runtime": "classic"
+        }
+      ]
+    ]
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.24.0",
+    "@babel/core": "^7.24.0",
+    "@babel/preset-react": "^7.23.3"
+  }
+}
