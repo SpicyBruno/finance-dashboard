@@ -1143,7 +1143,7 @@
       display: flex;
       align-items: flex-start;
       justify-content: center;
-      padding: 48px 16px;
+      padding: calc(48px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) calc(48px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
       overflow-y: auto;
       animation: overlayIn 0.18s ease;
     }
@@ -1241,7 +1241,7 @@
       background: var(--sheet-bg);
       border-top: 1px solid var(--border-light);
       border-radius: 18px 18px 0 0;
-      padding: 10px 12px calc(16px + env(safe-area-inset-bottom));
+      padding: 10px calc(12px + env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
       max-height: 82dvh;
       overflow-y: auto;
       box-shadow: 0 -18px 48px -12px rgba(0, 0, 0, 0.5);
@@ -1314,7 +1314,7 @@
     .fab {
       display: none;
       position: fixed;
-      right: 16px;
+      right: calc(16px + env(safe-area-inset-right));
       bottom: calc(78px + env(safe-area-inset-bottom));
       z-index: 90;
       align-items: center;
@@ -1414,7 +1414,7 @@
         left: 0;
         width: 100%;
         border-top: 1px solid var(--border);
-        padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+        padding: 6px calc(4px + env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) calc(4px + env(safe-area-inset-left));
         background: var(--nav-bg);
         backdrop-filter: blur(18px);
         z-index: 100;
@@ -1463,6 +1463,9 @@
         background: var(--gold);
       }
 
+      /* La pagina va a tutto schermo (viewport-fit=cover + status bar
+         translucida): senza questo margine la barra finisce sotto l'orologio e
+         la batteria del telefono, e i suoi bottoni non si riescono a premere. */
       .mobile-topbar {
         display: flex;
         align-items: center;
@@ -1470,8 +1473,8 @@
         position: sticky;
         top: 0;
         z-index: 80;
-        min-height: 56px;
-        padding: 8px 14px;
+        min-height: calc(56px + env(safe-area-inset-top));
+        padding: calc(8px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 8px calc(14px + env(safe-area-inset-left));
         border-bottom: 1px solid var(--border);
         background: var(--topbar-bg);
         backdrop-filter: blur(14px);
@@ -1511,7 +1514,7 @@
       }
 
       main {
-        padding: 14px 14px calc(104px + env(safe-area-inset-bottom));
+        padding: 14px calc(14px + env(safe-area-inset-right)) calc(104px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
       }
 
       .bento {
