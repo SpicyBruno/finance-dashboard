@@ -614,9 +614,12 @@ function loadScript(src) {
   return scriptCache[src];
 }
 
+/* Versioni fissate di proposito. Un @5 senza patch segue la CDN: è così che
+   @babel/standalone era scivolato alla v8 e aveva lasciato la pagina bianca
+   (vedi il commit "Fix blank page: pin @babel/standalone to 7.x"). */
 const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
 const PDFJS_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 
 async function ensurePdfJs(onProgress) {
   if (window.pdfjsLib) return window.pdfjsLib;
