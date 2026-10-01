@@ -17,7 +17,6 @@ const {
   PieChart,
   Pie,
   Cell,
-  Legend,
   BarChart,
   Bar,
   RadialBarChart,
@@ -553,6 +552,24 @@ const Ic = {
     y1: "10",
     x2: "21",
     y2: "10"
+  })),
+  camera: ({
+    size = 16
+  }) => /*#__PURE__*/React.createElement("svg", {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "2",
+    strokeLinecap: "round",
+    strokeLinejoin: "round"
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "12",
+    cy: "13",
+    r: "4"
   }))
 };
 
@@ -1093,7 +1110,6 @@ const C = {
 const OUTFLOW = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 const RETAINED = 'var(--chart-retained)';
 const rampColor = (i, n) => OUTFLOW[Math.min(OUTFLOW.length - 1, Math.round(i / Math.max(1, n - 1) * (OUTFLOW.length - 1)))];
-const PIE_COLORS = OUTFLOW;
 
 /* Il numero sale una volta sola, all'ingresso. Con moto ridotto arriva già al
    valore finale: nessuno stato intermedio da guardare. */
@@ -1136,6 +1152,291 @@ function useIsNarrow(maxWidth = 780) {
   return narrow;
 }
 
+/* ── Scala dei grafici ──
+   Una sola per tutte le schede. Prima ogni grafico aveva la sua altezza
+   fissa (340px per i mutui anche su un telefono da 390px), l'asse Y largo
+   60px di default e una legenda Recharts che andava a capo dentro l'area
+   disegnata, rubandole altezza. */
+function useChartScale() {
+  const narrow = useIsNarrow();
+  return useMemo(() => ({
+    narrow,
+    h: (desktop, phone) => narrow ? phone : desktop,
+    yWidth: narrow ? 40 : 52,
+    axis: {
+      stroke: C.textMuted,
+      tick: {
+        fontSize: narrow ? 10 : 11
+      },
+      tickLine: false
+    },
+    minTickGap: narrow ? 14 : 6,
+    margin: {
+      top: 8,
+      right: narrow ? 6 : 14,
+      left: 0,
+      bottom: 0
+    }
+  }), [narrow]);
+}
+
+/* Etichette d'asse compatte: "1,5k" invece di "1500€", che a 390px si
+   sovrapponevano o venivano tagliate dall'asse */
+const fmtTick = v => {
+  const n = Number(v) || 0;
+  const a = Math.abs(n);
+  if (a >= 1000) return `${(n / 1000).toLocaleString('it-IT', {
+    maximumFractionDigits: a >= 10000 ? 0 : 1
+  })}k`;
+  return `${Math.round(n)}€`;
+};
+
+/* Un solo stile per i tooltip: prima era ricopiato identico in quattro
+   posti. Il cursore di Recharts era un rettangolo grigio chiaro (#ccc) che
+   sul tema scuro accecava a ogni passaggio. */
+const TT = {
+  contentStyle: {
+    background: C.bg,
+    border: `1px solid ${C.gold}`,
+    fontFamily: 'var(--font-number)',
+    fontSize: 12,
+    color: C.text,
+    borderRadius: 4
+  },
+  itemStyle: {
+    color: C.textDim
+  },
+  labelStyle: {
+    color: C.gold
+  }
+};
+const TT_LINE = {
+  ...TT,
+  cursor: {
+    stroke: 'var(--border-light)',
+    strokeWidth: 1
+  }
+};
+const TT_BAR = {
+  ...TT,
+  cursor: {
+    fill: 'var(--surface-hover)'
+  }
+};
+
+/* Legenda in HTML sopra il grafico */
+function ChartLegend({
+  items,
+  shape = 'line'
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "chart-legend"
+  }, items.map(it => /*#__PURE__*/React.createElement("span", {
+    key: it.label
+  }, /*#__PURE__*/React.createElement("span", {
+    className: `swatch ${shape}`,
+    style: {
+      background: it.color
+    }
+  }), it.label)));
+}
+
+/* Ciambella con raggi in percentuale: prima erano 90px fissi e, nella
+   colonna a metà larghezza del telefono, il disco usciva dalla scheda. Il
+   totale al centro sta nella stessa scatola del grafico: prima stava in una
+   più alta di 30px e scendeva sotto il centro. */
+function Donut({
+  data,
+  colors,
+  height,
+  center
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "donut-box",
+    style: {
+      height
+    }
+  }, /*#__PURE__*/React.createElement(ResponsiveContainer, {
+    width: "100%",
+    height: "100%"
+  }, /*#__PURE__*/React.createElement(PieChart, null, /*#__PURE__*/React.createElement(Pie, {
+    data: data,
+    dataKey: "value",
+    nameKey: "name",
+    cx: "50%",
+    cy: "50%",
+    innerRadius: "66%",
+    outerRadius: "94%",
+    paddingAngle: 2,
+    stroke: "var(--card-solid)",
+    strokeWidth: 2
+  }, data.map((d, i) => /*#__PURE__*/React.createElement(Cell, {
+    key: d.name + i,
+    fill: colors[i % colors.length]
+  }))))), center && /*#__PURE__*/React.createElement("div", {
+    className: "donut-center"
+  }, center));
+}
+
+/* Gli spicchi senza nome non dicevano niente: ogni colore ha la sua riga,
+   con il valore e la quota. Sostituisce anche il tooltip, che sul telefono
+   copriva il totale al centro. */
+function DonutLegend({
+  data,
+  colors
+}) {
+  const total = data.reduce((s, d) => s + d.value, 0);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "donut-legend"
+  }, data.map((d, i) => /*#__PURE__*/React.createElement("div", {
+    key: d.name + i,
+    className: "legend-row"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "swatch",
+    style: {
+      background: colors[i % colors.length]
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "legend-name",
+    title: d.name
+  }, d.name), /*#__PURE__*/React.createElement("span", {
+    className: "legend-value"
+  }, fmt(d.value)), /*#__PURE__*/React.createElement("span", {
+    className: "legend-share"
+  }, fmtPct(d.value / Math.max(1, total))))));
+}
+
+/* ── Hero di sezione ──
+   Lo stesso livello 1 del Quadro, ora in ogni scheda: un numero solo alla
+   scala grande e accanto il dato che lo spiega. Prima le altre sezioni
+   aprivano con quattro riquadri identici in fila, e niente contava più di
+   niente. */
+function PageHero({
+  label,
+  value,
+  format = fmt,
+  tone,
+  meta,
+  aside,
+  foot,
+  footClass = ''
+}) {
+  const numeric = typeof value === 'number' && isFinite(value);
+  const shown = useCountUp(numeric ? value : 0);
+  return /*#__PURE__*/React.createElement("section", {
+    className: "card-hero reveal"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: aside ? 'hero-grid' : undefined
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "hero-label"
+  }, label), /*#__PURE__*/React.createElement("div", {
+    className: "hero-value",
+    style: tone ? {
+      color: tone
+    } : undefined
+  }, numeric ? format(shown) : value), meta && /*#__PURE__*/React.createElement("div", {
+    className: "hero-meta"
+  }, meta)), aside && /*#__PURE__*/React.createElement("div", {
+    className: "hero-aside"
+  }, aside)), foot && /*#__PURE__*/React.createElement("div", {
+    className: `hero-foot ${footClass}`
+  }, foot));
+}
+function HeroDelta({
+  up,
+  children
+}) {
+  return /*#__PURE__*/React.createElement("span", {
+    className: `hero-delta ${up ? 'up' : 'down'}`
+  }, up ? /*#__PURE__*/React.createElement(Ic.up, null) : /*#__PURE__*/React.createElement(Ic.down, null), children);
+}
+
+/* Livello 3: nessun riquadro, un bordo per il gruppo e filetti fra le celle */
+function StatStrip({
+  items,
+  delay = 60
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "stat-strip reveal",
+    "data-cols": items.length,
+    style: {
+      animationDelay: `${delay}ms`,
+      '--cols': items.length
+    }
+  }, items.map(it => /*#__PURE__*/React.createElement("div", {
+    key: it.label,
+    className: `stat-tile ${it.key ? 'stat-key' : ''}`
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "stat-label"
+  }, it.label), /*#__PURE__*/React.createElement("div", {
+    className: "stat-value",
+    style: it.color ? {
+      color: it.color
+    } : undefined
+  }, it.value, it.unit && /*#__PURE__*/React.createElement("span", {
+    className: "unit"
+  }, it.unit)), it.hint && /*#__PURE__*/React.createElement("div", {
+    className: "stat-hint"
+  }, it.hint), it.extra)));
+}
+function TrendTag({
+  trend,
+  invert
+}) {
+  if (trend === null || trend === undefined || !isFinite(trend) || trend === 0) return null;
+  const good = invert ? trend < 0 : trend > 0;
+  const TrendIc = trend >= 0 ? Ic.up : Ic.down;
+  return /*#__PURE__*/React.createElement("span", {
+    className: "trend-tag",
+    style: {
+      color: good ? C.sage : C.rust
+    }
+  }, /*#__PURE__*/React.createElement(TrendIc, null), " ", fmtPct(Math.abs(trend)));
+}
+
+/* Barre "da cosa è fatto": nate nell'hero del Quadro, ora condivise. Con
+   `target` compare una tacca sul valore obiettivo. */
+function PartBars({
+  title,
+  parts,
+  total
+}) {
+  return /*#__PURE__*/React.createElement("div", null, title && /*#__PURE__*/React.createElement("div", {
+    className: "aside-label"
+  }, title), parts.map(p => {
+    const fill = p.fill !== undefined ? p.fill : p.value / Math.max(1, total);
+    const share = p.share !== undefined ? p.share : fmtPct(p.value / Math.max(1, total));
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.name,
+      className: "part-row"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "part-head"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "part-name"
+    }, p.name), /*#__PURE__*/React.createElement("span", {
+      className: "part-value"
+    }, p.display !== undefined ? p.display : fmt(p.value), share && /*#__PURE__*/React.createElement("span", {
+      className: "part-share"
+    }, share))), /*#__PURE__*/React.createElement("div", {
+      className: "progress-track",
+      style: {
+        height: 6
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "progress-fill",
+      style: {
+        '--fill': Math.max(0, Math.min(1, fill)),
+        background: p.color
+      }
+    }), p.target !== undefined && /*#__PURE__*/React.createElement("span", {
+      className: "target-tick",
+      style: {
+        left: `${Math.max(0, Math.min(100, p.target))}%`
+      }
+    })));
+  }));
+}
+
 /* Sparkline: solo la forma dell'andamento, senza assi né griglia.
    Disegna i valori reali dello storico, non un ornamento. */
 function Sparkline({
@@ -1144,15 +1445,26 @@ function Sparkline({
   width = 260,
   height = 68
 }) {
+  /* Il tratteggio dell'animazione si misura in pixel dello schermo (per via
+     di vector-effect), non nelle unità del viewBox: con la lunghezza del
+     viewBox la linea, stirata in larghezza, restava disegnata a metà con un
+     buco in mezzo. Si ricalcola sulla larghezza reale. */
+  const svgRef = useRef(null);
+  const [scaleX, setScaleX] = useState(1);
+  React.useLayoutEffect(() => {
+    if (svgRef.current && svgRef.current.clientWidth) setScaleX(svgRef.current.clientWidth / width);
+  }, [width, points && points.length]);
   if (!points || points.length < 2) return null;
   const min = Math.min(...points),
     max = Math.max(...points);
-  const span = max - min || 1;
+  const span = max - min;
   const stepX = width / (points.length - 1);
-  const coords = points.map((v, i) => [i * stepX, height - (v - min) / span * (height - 8) - 4]);
+  // Valori tutti uguali: linea a metà altezza, non schiacciata sul fondo
+  const coords = points.map((v, i) => [i * stepX, span ? height - (v - min) / span * (height - 8) - 4 : height / 2]);
   const d = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-  const len = coords.reduce((s, c, i) => i === 0 ? 0 : s + Math.hypot(c[0] - coords[i - 1][0], c[1] - coords[i - 1][1]), 0);
+  const len = coords.reduce((s, c, i) => i === 0 ? 0 : s + Math.hypot((c[0] - coords[i - 1][0]) * scaleX, c[1] - coords[i - 1][1]), 0);
   return /*#__PURE__*/React.createElement("svg", {
+    ref: svgRef,
     className: "hero-spark",
     viewBox: `0 0 ${width} ${height}`,
     width: "100%",
@@ -1160,7 +1472,7 @@ function Sparkline({
     preserveAspectRatio: "none",
     "aria-hidden": "true",
     style: {
-      '--spark-len': Math.ceil(len)
+      '--spark-len': Math.ceil(len) + 4
     }
   }, /*#__PURE__*/React.createElement("path", {
     d: d,
@@ -1179,12 +1491,25 @@ function SavingArc({
   rate,
   size = 62
 }) {
-  const pct = Math.max(0, Math.min(1, rate / 0.5));
+  const color = rate >= 0.2 ? C.sage : rate >= 0.1 ? C.gold : C.rust;
+  return /*#__PURE__*/React.createElement(ArcMeter, {
+    pct: rate / 0.5,
+    color: color,
+    size: size
+  });
+}
+
+/* Lo stesso arco, per qualunque quota da 0 a 1 (es. il win rate dei mercati) */
+function ArcMeter({
+  pct: rawPct,
+  color,
+  size = 62
+}) {
+  const pct = Math.max(0, Math.min(1, rawPct || 0));
   const r = (size - 7) / 2,
     cx = size / 2,
     cy = size / 2;
   const circ = 2 * Math.PI * r;
-  const color = rate >= 0.2 ? C.sage : rate >= 0.1 ? C.gold : C.rust;
   return /*#__PURE__*/React.createElement("svg", {
     width: size,
     height: size,
@@ -1199,7 +1524,7 @@ function SavingArc({
     fill: "none",
     stroke: "var(--border)",
     strokeWidth: "5"
-  }), /*#__PURE__*/React.createElement("circle", {
+  }), pct > 0 && /*#__PURE__*/React.createElement("circle", {
     cx: cx,
     cy: cy,
     r: r,
@@ -1532,6 +1857,10 @@ function Section({
     }
   }, fmt(total))), children);
 }
+/* Sul telefono la griglia passava a due colonne con tre figli: il cestino
+   finiva da solo su una riga, sotto ogni voce. Ora ha la sua colonna; con
+   più di un numero (le rate) il nome prende una riga intera e sopra i numeri
+   c'è un'intestazione, che prima mancava anche sul desktop. */
 function DataTable({
   items,
   section,
@@ -1540,12 +1869,29 @@ function DataTable({
   fields,
   fieldLabels
 }) {
-  return /*#__PURE__*/React.createElement("div", null, items.map(item => /*#__PURE__*/React.createElement("div", {
-    key: item.id,
-    className: "data-row data-edit-row",
+  const cols = fields.length === 2 ? '2fr 1fr auto' : `2fr repeat(${fields.length - 1}, 1fr) auto`;
+  const labelOf = f => fieldLabels && fieldLabels[f] || (f === 'label' ? 'Voce' : 'Importo');
+  return /*#__PURE__*/React.createElement("div", null, fields.length > 2 && /*#__PURE__*/React.createElement("div", {
+    className: "data-head data-edit-row",
+    "data-fields": fields.length,
     style: {
       display: 'grid',
-      gridTemplateColumns: fields.length === 2 ? '2fr 1fr auto' : `2fr repeat(${fields.length - 1}, 1fr) auto`,
+      gridTemplateColumns: cols,
+      gap: 12
+    },
+    "aria-hidden": "true"
+  }, fields.map(f => /*#__PURE__*/React.createElement("span", {
+    key: f,
+    style: f !== 'label' ? {
+      textAlign: 'right'
+    } : undefined
+  }, labelOf(f))), /*#__PURE__*/React.createElement("span", null)), items.map(item => /*#__PURE__*/React.createElement("div", {
+    key: item.id,
+    className: "data-row data-edit-row",
+    "data-fields": fields.length,
+    style: {
+      display: 'grid',
+      gridTemplateColumns: cols,
       gap: 12,
       alignItems: 'center',
       padding: '4px 0'
@@ -1553,16 +1899,19 @@ function DataTable({
   }, fields.map(f => /*#__PURE__*/React.createElement("input", {
     key: f,
     type: f === 'label' ? 'text' : 'number',
+    inputMode: f === 'label' ? undefined : 'decimal',
     value: item[f],
     onChange: e => onUpdate(section, item.id, f, e.target.value),
     className: f === 'label' ? 'input-label' : 'input-cell',
-    placeholder: fieldLabels?.[f] || f,
+    placeholder: labelOf(f),
+    "aria-label": labelOf(f),
     style: f !== 'label' ? {
       textAlign: 'right'
     } : {}
   })), /*#__PURE__*/React.createElement("button", {
     className: "row-delete",
     onClick: () => onRemove(section, item.id),
+    "aria-label": `Elimina ${item.label || 'voce'}`,
     style: {
       background: 'none',
       border: 'none',
@@ -1642,8 +1991,10 @@ function parseItalianAmount(str) {
   let s = String(str).trim().replace(/[€\s]/g, '');
   const hasComma = s.includes(',');
   const hasDot = s.includes('.');
+  // Con entrambi i separatori il decimale è l'ultimo dei due: vale per
+  // "1.550,00" e anche per "1,550.00" (che prima diventava 1,55)
   if (hasComma && hasDot) {
-    s = s.replace(/\./g, '').replace(',', '.');
+    s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
   } else if (hasComma) {
     s = s.replace(',', '.');
   } else if (hasDot && /\.\d{3}(\D|$)/.test(s) && !/\.\d{1,2}$/.test(s)) {
@@ -1652,6 +2003,27 @@ function parseItalianAmount(str) {
   const n = parseFloat(s);
   return isFinite(n) ? n : null;
 }
+
+/* Importi con i decimali, come compaiono in busta paga. Prima mancava il
+   confine dopo l'ultima cifra: in "1550,00" la prima alternativa si fermava
+   a "155" e il netto proposto era dieci volte più piccolo. Niente lookbehind:
+   su Safari prima della 16.4 una regex che lo usa non si compila e manda giù
+   l'intera app. */
+const DOC_AMOUNT_RE = /(^|[^0-9.,])(\d{1,3}(?:\.\d{3})+,\d{2}|\d{1,3}(?:,\d{3})+\.\d{2}|\d+,\d{2}|\d+\.\d{2})(?![0-9])/g;
+function findDocAmounts(text) {
+  const out = [];
+  const re = new RegExp(DOC_AMOUNT_RE.source, 'g');
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const value = parseItalianAmount(m[2]);
+    if (value !== null) out.push({
+      value,
+      index: m.index + m[1].length
+    });
+  }
+  return out;
+}
+const NETTO_KEYWORDS = ['netto a pagare', 'netto del mese', 'netto in busta', 'netto bonifico', 'netto da corrispondere', 'totale netto', 'importo netto', 'totale competenze nette', 'totale a pagare', 'netto'];
 function parseFinancialDoc(text) {
   const result = {
     month: null,
@@ -1659,45 +2031,52 @@ function parseFinancialDoc(text) {
     candidates: []
   };
   if (!text) return result;
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().replace(/\s+/g, ' ');
+  const mesi = MESI_IT.join('|');
 
-  // Mese: "gennaio 2024", "01/2024", "01-2024", "2024-01"
-  const reMese1 = new RegExp('\\b(' + MESI_IT.join('|') + ')\\s+(20\\d{2})\\b', 'i');
-  const m1 = lower.match(reMese1);
-  if (m1) {
-    const mm = meseItToNum(m1[1]);
-    if (mm) result.month = m1[2] + '-' + mm;
+  // Mese: prima quello accanto a "periodo", "mese", "competenza" — il primo
+  // "gennaio 2024" del documento poteva essere la data di assunzione
+  const nearName = lower.match(new RegExp('(?:periodo|mese|competenza|retribuzione)[^a-z0-9]{0,30}(' + mesi + ')[^a-z0-9]{0,3}(20\\d{2})'));
+  const nearNum = lower.match(/(?:periodo|mese|competenza)[^0-9]{0,30}(0[1-9]|1[0-2])[\/\-](20\d{2})\b/);
+  const anyName = lower.match(new RegExp('\\b(' + mesi + ')\\s+(20\\d{2})\\b'));
+  if (nearName) result.month = nearName[2] + '-' + meseItToNum(nearName[1]);else if (nearNum) result.month = nearNum[2] + '-' + nearNum[1];else if (anyName) result.month = anyName[2] + '-' + meseItToNum(anyName[1]);else {
+    const m2 = lower.match(/\b(0[1-9]|1[0-2])[\/\-](20\d{2})\b/);
+    const m3 = lower.match(/\b(20\d{2})[\/\-](0[1-9]|1[0-2])\b/);
+    if (m2) result.month = m2[2] + '-' + m2[1];else if (m3) result.month = m3[1] + '-' + m3[2];
   }
-  if (!result.month) {
-    const m2 = text.match(/\b(0[1-9]|1[0-2])[\/\-](20\d{2})\b/);
-    if (m2) result.month = m2[2] + '-' + m2[1];else {
-      const m3 = text.match(/\b(20\d{2})[\/\-](0[1-9]|1[0-2])\b/);
-      if (m3) result.month = m3[1] + '-' + m3[2];
-    }
-  }
+  const amounts = findDocAmounts(lower);
+  const seen = new Set();
+  const push = (value, keyword) => {
+    const k = value.toFixed(2);
+    if (seen.has(k)) return;
+    seen.add(k);
+    result.candidates.push({
+      value,
+      keyword
+    });
+  };
 
-  // Netto: cerca parole chiave seguite da numero
-  const keywords = ['netto a pagare', 'netto del mese', 'totale netto', 'totale competenze nette', 'totale a pagare', 'importo netto', 'netto in busta', 'netto bonifico'];
-  const numPattern = '([0-9]{1,3}(?:[\\.\\s][0-9]{3})*(?:,[0-9]{2})?|[0-9]+(?:,[0-9]{2})?|[0-9]+\\.[0-9]{2})';
-  for (const kw of keywords) {
-    const re = new RegExp(kw.replace(/\s+/g, '\\s+') + '[\\s:€]*' + numPattern, 'i');
-    const m = lower.match(re);
-    if (m) {
-      const val = parseItalianAmount(m[1]);
-      if (val && val > 100 && val < 100000) {
-        result.candidates.push({
-          keyword: kw,
-          value: val
-        });
-        if (result.netto === null) result.netto = val;
+  // Netto: il primo importo che segue la parola chiave entro 80 caratteri.
+  // Prima doveva starle attaccato, ma pdf.js mette spesso in mezzo le altre
+  // colonne della riga.
+  for (const kw of NETTO_KEYWORDS) {
+    let from = 0,
+      idx;
+    while ((idx = lower.indexOf(kw, from)) !== -1) {
+      from = idx + kw.length;
+      const hit = amounts.find(a => a.index >= from && a.index - from <= 80 && a.value >= 100 && a.value < 100000);
+      if (hit) {
+        push(hit.value, kw);
+        break;
       }
     }
   }
-  if (result.netto === null) {
-    // Fallback: il più grande importo del documento (euristica)
-    const allNums = [...lower.matchAll(/([0-9]{1,3}(?:[\.\s][0-9]{3})+,[0-9]{2}|[0-9]+,[0-9]{2})/g)].map(x => parseItalianAmount(x[1])).filter(v => v && v > 500 && v < 20000);
-    if (allNums.length) result.netto = Math.max(...allNums);
-  }
+  result.netto = result.candidates.length ? result.candidates[0].value : null;
+
+  // Gli altri importi plausibili diventano proposte da toccare. Prima il più
+  // grande del documento diventava da solo il netto: quasi sempre era il lordo.
+  amounts.filter(a => a.value >= 300 && a.value <= 20000).sort((a, b) => b.value - a.value).forEach(a => push(a.value, null));
+  result.candidates = result.candidates.slice(0, 6);
   return result;
 }
 
@@ -1714,7 +2093,9 @@ function loadScript(src) {
     el.onload = () => resolve();
     el.onerror = () => {
       delete scriptCache[src];
-      reject(new Error(`Impossibile caricare ${src}`));
+      const err = new Error(`Impossibile caricare ${src}`);
+      err.code = 'LOAD';
+      reject(err);
     };
     document.head.appendChild(el);
   });
@@ -1729,7 +2110,7 @@ const PDFJS_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174
 const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 async function ensurePdfJs(onProgress) {
   if (window.pdfjsLib) return window.pdfjsLib;
-  if (onProgress) onProgress('Carico il lettore PDF...');
+  if (onProgress) onProgress('Carico il lettore PDF…');
   await loadScript(PDFJS_URL);
   if (!window.pdfjsLib) throw new Error('PDF.js non disponibile');
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
@@ -1737,31 +2118,70 @@ async function ensurePdfJs(onProgress) {
 }
 async function ensureTesseract(onProgress) {
   if (window.Tesseract) return window.Tesseract;
-  if (onProgress) onProgress('Carico il motore OCR...');
+  if (onProgress) onProgress('Carico il motore OCR…');
   await loadScript(TESSERACT_URL);
   if (!window.Tesseract) throw new Error('Tesseract.js non disponibile');
   return window.Tesseract;
 }
+
+/* Le foto del telefono arrivano a 12 MP e con la rotazione scritta solo
+   nell'EXIF. Date così a Tesseract finivano la memoria di Safari su iPhone,
+   e un cedolino fotografato in verticale veniva letto di traverso. Un <img>
+   applica già la rotazione: lo si ridisegna rimpicciolito e in grigio. */
+function prepareImageForOcr(file, maxSide = 2000) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const w = img.naturalWidth,
+        h = img.naturalHeight;
+      if (!w || !h) {
+        reject(new Error('IMAGE_DECODE'));
+        return;
+      }
+      const scale = Math.min(1, maxSide / Math.max(w, h));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.filter = 'grayscale(1) contrast(1.15)'; // ignorato dove non è supportato
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('IMAGE_DECODE'));
+    };
+    img.src = url;
+  });
+}
+const ocrLogger = report => m => {
+  if (m.status === 'recognizing text') report('Riconosco il testo…', m.progress);else if (m.status) report('Preparo il riconoscimento del testo…', null);
+};
+
+/* onProgress(messaggio, quota 0–1 oppure null se non si sa quanto manca) */
 async function extractTextFromFile(file, onProgress) {
+  const report = (msg, pct) => onProgress && onProgress(msg, pct);
   const name = (file.name || '').toLowerCase();
   const isPdf = name.endsWith('.pdf') || file.type === 'application/pdf';
   if (isPdf) {
-    await ensurePdfJs(onProgress);
+    await ensurePdfJs(report);
     const buf = await file.arrayBuffer();
     const pdf = await window.pdfjsLib.getDocument({
       data: buf
     }).promise;
     let full = '';
     for (let i = 1; i <= pdf.numPages; i++) {
-      if (onProgress) onProgress(`Lettura pagina ${i}/${pdf.numPages}...`);
+      report(`Leggo la pagina ${i} di ${pdf.numPages}…`, i / pdf.numPages);
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
       full += content.items.map(it => it.str).join(' ') + '\n';
     }
     if (full.replace(/\s/g, '').length < 30) {
-      // PDF probabilmente scansionato → fallback OCR sulla prima pagina
-      if (onProgress) onProgress('PDF scansionato, eseguo OCR...');
-      const Tesseract = await ensureTesseract(onProgress);
+      // PDF probabilmente scansionato → OCR sulla prima pagina
+      report('PDF scansionato: riconosco il testo…', null);
+      const Tesseract = await ensureTesseract(report);
       const page = await pdf.getPage(1);
       const viewport = page.getViewport({
         scale: 2
@@ -1775,25 +2195,38 @@ async function extractTextFromFile(file, onProgress) {
       }).promise;
       const {
         data
-      } = await Tesseract.recognize(canvas, 'ita');
+      } = await Tesseract.recognize(canvas, 'ita', {
+        logger: ocrLogger(report)
+      });
       full = data.text || '';
     }
     return full;
   }
   // Immagini → OCR
-  if (file.type.startsWith('image/')) {
-    const Tesseract = await ensureTesseract(onProgress);
-    if (onProgress) onProgress('OCR immagine in corso...');
+  if ((file.type || '').startsWith('image/') || /\.(jpe?g|png|heic|heif|webp)$/.test(name)) {
+    const Tesseract = await ensureTesseract(report);
+    report('Preparo la foto…', null);
+    const canvas = await prepareImageForOcr(file);
     const {
       data
-    } = await Tesseract.recognize(file, 'ita', {
-      logger: m => {
-        if (m.status === 'recognizing text' && onProgress) onProgress(`OCR ${Math.round(m.progress * 100)}%`);
-      }
+    } = await Tesseract.recognize(canvas, 'ita', {
+      logger: ocrLogger(report)
     });
     return data.text || '';
   }
-  throw new Error('Formato file non supportato');
+  throw new Error('UNSUPPORTED');
+}
+
+/* Un errore che dice cosa fare, non solo cosa è successo */
+function describeImportError(e) {
+  const msg = e && e.message || String(e || '');
+  if (e && e.code === 'LOAD' || typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return 'Il lettore dei PDF e il riconoscimento del testo si scaricano da internet al primo uso: collegati e riprova.';
+  }
+  if (msg === 'UNSUPPORTED') return 'Formato non supportato: scegli un PDF oppure una foto (JPEG, PNG o HEIC).';
+  if (msg === 'IMAGE_DECODE') return 'Non riesco ad aprire questa foto. Riprova scattandola dal pulsante della fotocamera, oppure salvala in JPEG.';
+  if (/password/i.test(msg) || e && e.name === 'PasswordException') return 'Il PDF è protetto da password: aprilo, salvane una copia senza protezione e riprova.';
+  return `Non sono riuscito a leggere il file (${msg}). Puoi comunque inserire i dati a mano.`;
 }
 
 /* ── Parser estratti conto → movimenti ── */
@@ -1969,6 +2402,10 @@ function isDuplicateTx(tx, existing) {
 }
 
 /* ── Cedolini Tab ── */
+const shortMonthLabel = key => {
+  const [y, m] = String(key || '').split('-');
+  return `${(MESI_IT[parseInt(m, 10) - 1] || '').slice(0, 3)} ${String(y || '').slice(2)}`;
+};
 function CedoliniTab({
   cedolini,
   onAdd,
@@ -1976,78 +2413,107 @@ function CedoliniTab({
   currentISO,
   showToast
 }) {
-  const [form, setForm] = React.useState({
+  const [form, setForm] = useState({
     month: currentISO || '',
     netto: '',
     note: ''
   });
-  const [err, setErr] = React.useState('');
-  const [isDragging, setIsDragging] = React.useState(false);
-  const [loading, setLoading] = React.useState('');
-  const [confirmData, setConfirmData] = React.useState(null);
-  const fileInputRef = React.useRef(null);
-  const handleFileUpload = async file => {
-    if (!file) return;
-    setLoading('Analisi del documento in corso...');
+  const [err, setErr] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const [loading, setLoading] = useState(null); // null | { msg, pct }
+  const [importErr, setImportErr] = useState('');
+  const [confirmData, setConfirmData] = useState(null);
+  const [confirmErr, setConfirmErr] = useState('');
+  const confirmRef = useRef(null);
+  const scale = useChartScale();
+  const busy = !!loading;
+
+  /* Sul telefono il pannello di conferma compare sotto la piega: senza
+     questo il file sembrava non aver prodotto nulla */
+  const hasConfirm = !!confirmData;
+  useEffect(() => {
+    if (!hasConfirm || !confirmRef.current) return;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    confirmRef.current.scrollIntoView({
+      behavior: reduce ? 'auto' : 'smooth',
+      block: 'center'
+    });
+  }, [hasConfirm]);
+  const handleFile = async file => {
+    if (!file || busy) return;
+    setImportErr('');
+    setConfirmErr('');
+    setConfirmData(null);
+    setLoading({
+      msg: 'Apro il documento…',
+      pct: null
+    });
     try {
-      const text = await extractTextFromFile(file, msg => setLoading(msg));
+      const text = await extractTextFromFile(file, (msg, pct) => setLoading({
+        msg,
+        pct: pct === undefined ? null : pct
+      }));
       const parsed = parseFinancialDoc(text);
-      if (!parsed.netto && !parsed.month) {
-        showToast && showToast('Estrazione fallita: dati non riconosciuti');
-        setLoading('');
-        return;
-      }
+      /* Anche se non si trova niente il pannello si apre: prima un avviso di
+         due secondi e mezzo chiudeva la faccenda, e il file era perso */
       setConfirmData({
         month: parsed.month || currentISO || '',
-        netto: parsed.netto ? String(parsed.netto.toFixed(2)) : '',
+        netto: parsed.netto ? parsed.netto.toFixed(2) : '',
         note: `Importato da ${file.name}`,
-        candidates: parsed.candidates,
-        fileName: file.name
+        candidates: parsed.candidates || [],
+        fileName: file.name,
+        found: !!parsed.netto
       });
-      setLoading('');
     } catch (e) {
       console.error(e);
-      showToast && showToast('Errore: ' + e.message);
-      setLoading('');
+      setImportErr(describeImportError(e));
+    } finally {
+      setLoading(null);
     }
+  };
+  const onPick = e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (f) handleFile(f);
   };
   const onDrop = e => {
     e.preventDefault();
     setIsDragging(false);
     const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) handleFileUpload(f);
+    if (f) handleFile(f);
   };
   const confirmImport = () => {
     if (!confirmData) return;
-    if (!confirmData.month.match(/^\d{4}-\d{2}$/)) {
-      showToast && showToast('Mese non valido');
+    if (!/^\d{4}-\d{2}$/.test(confirmData.month)) {
+      setConfirmErr('Scegli il mese del cedolino.');
       return;
     }
-    const n = Number(confirmData.netto);
-    if (!n || n <= 0) {
-      showToast && showToast('Netto non valido');
+    const n = Number(String(confirmData.netto).replace(',', '.'));
+    if (!(n > 0)) {
+      setConfirmErr('Inserisci il netto in euro, maggiore di zero.');
       return;
     }
     if (cedolini.find(c => c.month === confirmData.month)) {
-      showToast && showToast('Cedolino già presente per questo mese');
+      setConfirmErr(`C'è già un cedolino per ${itMonthLabel(confirmData.month)}: eliminalo dall'elenco prima di importarne un altro.`);
       return;
     }
     onAdd({
       id: Date.now(),
       month: confirmData.month,
-      netto: n,
+      netto: Math.round(n * 100) / 100,
       note: confirmData.note
     });
     setConfirmData(null);
+    setConfirmErr('');
     showToast && showToast('Cedolino importato dal documento');
   };
   const sorted = [...cedolini].sort((a, b) => a.month.localeCompare(b.month));
   const handleAdd = () => {
-    if (!form.month.match(/^\d{4}-\d{2}$/)) {
-      setErr('Formato mese non valido (YYYY-MM)');
+    if (!/^\d{4}-\d{2}$/.test(form.month)) {
+      setErr('Scegli il mese (formato AAAA-MM).');
       return;
     }
-    const nettoNum = Number(form.netto);
+    const nettoNum = Number(String(form.netto).replace(',', '.'));
     if (!nettoNum || nettoNum <= 0) {
       setErr('Inserisci un netto valido');
       return;
@@ -2070,136 +2536,185 @@ function CedoliniTab({
     setErr('');
   };
   const chartData = sorted.map(c => ({
-    month: c.month,
+    month: shortMonthLabel(c.month),
     netto: c.netto
   }));
   const avg = sorted.length > 0 ? sorted.reduce((s, c) => s + c.netto, 0) / sorted.length : 0;
+  const last = sorted[sorted.length - 1];
+  const prevC = sorted[sorted.length - 2];
+  const lastDelta = last && prevC ? last.netto - prevC.netto : null;
+  const minC = sorted.length ? sorted.reduce((m, c) => c.netto < m.netto ? c : m) : null;
+  const maxC = sorted.length ? sorted.reduce((m, c) => c.netto > m.netto ? c : m) : null;
+  const deltaOf = c => {
+    const i = sorted.indexOf(c);
+    return i > 0 ? c.netto - sorted[i - 1].netto : null;
+  };
+  const deltaText = d => d === null ? '—' : `${d >= 0 ? '+' : '−'}${fmt(Math.abs(d))}`;
+  const deltaColor = d => d === null ? C.textMuted : d >= 0 ? C.sage : C.rust;
   return /*#__PURE__*/React.createElement("div", {
     className: "bento"
-  }, /*#__PURE__*/React.createElement("div", {
+  }, sorted.length > 0 && /*#__PURE__*/React.createElement(PageHero, {
+    label: "Netto medio mensile",
+    value: avg,
+    meta: /*#__PURE__*/React.createElement("span", null, sorted.length, " ", sorted.length === 1 ? 'mese registrato' : 'mesi registrati', " \xB7 da ", itMonthLabel(sorted[0].month)),
+    aside: /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      className: "aside-label"
+    }, "Ultimi cedolini"), [...sorted].reverse().slice(0, 4).map(c => {
+      const d = deltaOf(c);
+      return /*#__PURE__*/React.createElement("div", {
+        key: c.id,
+        className: "part-head recent-row"
+      }, /*#__PURE__*/React.createElement("span", {
+        className: "part-name"
+      }, itMonthLabel(c.month)), /*#__PURE__*/React.createElement("span", {
+        className: "part-value"
+      }, fmt(c.netto), /*#__PURE__*/React.createElement("span", {
+        className: "part-share",
+        style: {
+          color: deltaColor(d)
+        }
+      }, deltaText(d))));
+    }))
+  }), sorted.length > 0 && /*#__PURE__*/React.createElement(StatStrip, {
+    items: [{
+      label: 'Ultimo netto',
+      value: fmt(last.netto),
+      color: C.gold,
+      hint: /*#__PURE__*/React.createElement(React.Fragment, null, itMonthLabel(last.month), lastDelta !== null && /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: deltaColor(lastDelta)
+        }
+      }, " \xB7 ", deltaText(lastDelta)))
+    }, {
+      label: 'Netto minimo',
+      value: fmt(minC.netto),
+      color: C.rust,
+      hint: itMonthLabel(minC.month)
+    }, {
+      label: 'Netto massimo',
+      value: fmt(maxC.netto),
+      color: C.sage,
+      hint: itMonthLabel(maxC.month)
+    }]
+  }), /*#__PURE__*/React.createElement("div", {
     className: "bento-card span-12"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Importa da PDF / immagine")), /*#__PURE__*/React.createElement("span", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Importa da PDF / immagine")), /*#__PURE__*/React.createElement("span", {
     className: "mono-font",
     style: {
       fontSize: 11,
       color: C.textMuted
     }
-  }, "cedolini \xB7 estratti conto")), /*#__PURE__*/React.createElement("div", {
+  }, "PDF \xB7 foto \xB7 OCR")), /*#__PURE__*/React.createElement("input", {
+    id: "cedolino-file",
+    className: "file-input",
+    type: "file",
+    accept: "application/pdf,image/*",
+    disabled: busy,
+    onChange: onPick
+  }), /*#__PURE__*/React.createElement("label", {
+    htmlFor: "cedolino-file",
+    className: `dropzone ${isDragging ? 'dragging' : ''} ${busy ? 'busy' : ''}`,
     onDragOver: e => {
       e.preventDefault();
-      setIsDragging(true);
+      if (!busy) setIsDragging(true);
     },
     onDragLeave: () => setIsDragging(false),
     onDrop: onDrop,
-    onClick: () => fileInputRef.current && fileInputRef.current.click(),
+    "aria-busy": busy
+  }, busy ? /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-progress",
+    role: "status",
+    "aria-live": "polite"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-msg"
+  }, loading.msg), /*#__PURE__*/React.createElement("span", {
+    className: `progress-track ${loading.pct === null ? 'indeterminate' : ''}`,
     style: {
-      border: `2px dashed ${isDragging ? C.gold : C.borderLight}`,
-      background: isDragging ? 'var(--accent-subtle)' : 'var(--surface-soft)',
-      borderRadius: 8,
-      padding: '32px 20px',
-      textAlign: 'center',
-      cursor: loading ? 'wait' : 'pointer',
-      transition: 'all 0.2s',
-      opacity: loading ? 0.7 : 1
+      display: 'block'
     }
-  }, /*#__PURE__*/React.createElement("input", {
-    ref: fileInputRef,
-    type: "file",
-    accept: "application/pdf,image/*",
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "progress-fill",
     style: {
-      display: 'none'
-    },
-    onChange: e => {
-      const f = e.target.files[0];
-      if (f) handleFileUpload(f);
-      e.target.value = '';
-    }
-  }), loading ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 28,
-      marginBottom: 10
-    }
-  }, "\u23F3"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.gold,
-      fontSize: 13,
-      letterSpacing: '0.05em'
-    }
-  }, loading)) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 28,
-      marginBottom: 10,
-      color: C.gold
-    }
-  }, "\u2913"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.text,
-      fontSize: 14,
-      marginBottom: 6
-    }
-  }, "Trascina qui un ", /*#__PURE__*/React.createElement("strong", null, "cedolino PDF"), " o un ", /*#__PURE__*/React.createElement("strong", null, "estratto conto")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.textMuted,
-      fontSize: 11.5
-    }
-  }, "oppure clicca per selezionare \xB7 supportati PDF e immagini (OCR)"))), confirmData && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 16,
-      padding: 16,
-      border: `1px solid ${C.gold}`,
-      borderRadius: 6,
-      background: 'var(--accent-subtle)'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      letterSpacing: '0.18em',
-      textTransform: 'uppercase',
-      color: C.gold,
-      marginBottom: 12
-    }
-  }, "Conferma dati estratti \u2014 ", confirmData.fileName), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: '160px 180px 1fr auto auto',
-      gap: 12,
-      alignItems: 'end'
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
       display: 'block',
-      marginBottom: 6
+      '--fill': loading.pct === null ? 0.35 : loading.pct,
+      background: C.gold
     }
+  }))) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-icon"
+  }, /*#__PURE__*/React.createElement(Ic.upload, {
+    size: 22
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-title only-fine"
+  }, "Trascina qui un ", /*#__PURE__*/React.createElement("strong", null, "cedolino"), " in PDF o una foto"), /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-title only-coarse"
+  }, "Tocca per scegliere il ", /*#__PURE__*/React.createElement("strong", null, "cedolino"), ": PDF o foto"), /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-hint only-fine"
+  }, "oppure clicca per selezionarlo \xB7 il netto viene letto in automatico"), /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-hint only-coarse"
+  }, "da File, dalla libreria Foto o con la fotocamera"))), /*#__PURE__*/React.createElement("div", {
+    className: "dropzone-alt"
+  }, /*#__PURE__*/React.createElement("input", {
+    id: "cedolino-camera",
+    className: "file-input",
+    type: "file",
+    accept: "image/*",
+    capture: "environment",
+    disabled: busy,
+    onChange: onPick
+  }), /*#__PURE__*/React.createElement("label", {
+    htmlFor: "cedolino-camera",
+    className: `btn-ghost ${busy ? 'is-disabled' : ''}`
+  }, /*#__PURE__*/React.createElement(Ic.camera, null), " Fotografa il cedolino")), importErr && /*#__PURE__*/React.createElement("div", {
+    className: "inline-error",
+    role: "alert"
+  }, /*#__PURE__*/React.createElement(Ic.alert, {
+    size: 15
+  }), /*#__PURE__*/React.createElement("span", null, importErr)), confirmData && /*#__PURE__*/React.createElement("div", {
+    className: "import-confirm",
+    ref: confirmRef
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "import-confirm-head"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "aside-label",
+    style: {
+      color: C.gold,
+      margin: 0
+    }
+  }, "Controlla e conferma"), /*#__PURE__*/React.createElement("span", {
+    className: "import-file",
+    title: confirmData.fileName
+  }, confirmData.fileName)), !confirmData.found && /*#__PURE__*/React.createElement("p", {
+    className: "import-note"
+  }, "Non ho trovato il netto nel documento: ", confirmData.candidates.length ? 'tocca uno degli importi trovati oppure scrivilo tu.' : 'scrivilo tu qui sotto.'), /*#__PURE__*/React.createElement("div", {
+    className: "import-fields"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-field"
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "ic-month"
   }, "Mese"), /*#__PURE__*/React.createElement("input", {
+    id: "ic-month",
+    type: "month",
     className: "input-cell",
+    placeholder: "2026-04",
     value: confirmData.month,
     onChange: e => setConfirmData(d => ({
       ...d,
       month: e.target.value
     }))
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "modal-field"
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "ic-netto"
   }, "Netto (\u20AC)"), /*#__PURE__*/React.createElement("input", {
+    id: "ic-netto",
     type: "number",
+    inputMode: "decimal",
+    min: "0",
+    step: "0.01",
     className: "input-cell",
     value: confirmData.netto,
     onChange: e => setConfirmData(d => ({
@@ -2209,83 +2724,77 @@ function CedoliniTab({
     style: {
       textAlign: 'right'
     }
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "modal-field"
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "ic-note"
   }, "Note"), /*#__PURE__*/React.createElement("input", {
-    className: "input-label",
+    id: "ic-note",
+    className: "input-cell",
     value: confirmData.note,
     onChange: e => setConfirmData(d => ({
       ...d,
       note: e.target.value
     }))
-  })), /*#__PURE__*/React.createElement("button", {
-    onClick: confirmImport,
-    style: {
-      background: C.gold,
-      border: 'none',
-      color: C.onAccent,
-      padding: '10px 20px',
-      cursor: 'pointer',
-      fontFamily: 'inherit',
-      fontSize: 12,
-      fontWeight: 600,
-      letterSpacing: '0.08em',
-      borderRadius: 6,
-      whiteSpace: 'nowrap'
+  }))), confirmData.candidates.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "amount-chips"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "amount-chips-label"
+  }, "Importi trovati"), confirmData.candidates.map(c => {
+    const v = c.value.toFixed(2);
+    const active = Math.abs(Number(confirmData.netto) - c.value) < 0.005;
+    return /*#__PURE__*/React.createElement("button", {
+      key: v,
+      type: "button",
+      className: `amount-chip ${active ? 'active' : ''}`,
+      "aria-pressed": active,
+      title: c.keyword ? `accanto a "${c.keyword}"` : undefined,
+      onClick: () => setConfirmData(d => ({
+        ...d,
+        netto: v
+      }))
+    }, fmtEUR2(c.value));
+  })), confirmErr && /*#__PURE__*/React.createElement("div", {
+    className: "inline-error",
+    role: "alert"
+  }, /*#__PURE__*/React.createElement(Ic.alert, {
+    size: 15
+  }), /*#__PURE__*/React.createElement("span", null, confirmErr)), /*#__PURE__*/React.createElement("div", {
+    className: "import-actions"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn-ghost",
+    onClick: () => {
+      setConfirmData(null);
+      setConfirmErr('');
     }
-  }, "\u2713 Conferma"), /*#__PURE__*/React.createElement("button", {
-    onClick: () => setConfirmData(null),
-    style: {
-      background: 'transparent',
-      border: `1px solid ${C.border}`,
-      color: C.textDim,
-      padding: '10px 16px',
-      cursor: 'pointer',
-      fontFamily: 'inherit',
-      fontSize: 12,
-      letterSpacing: '0.08em',
-      borderRadius: 6
-    }
-  }, "Annulla")), confirmData.candidates && confirmData.candidates.length > 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 12,
-      fontSize: 11,
-      color: C.textMuted
-    }
-  }, "Riconosciuto via: ", confirmData.candidates.map(c => `"${c.keyword}" → ${fmt(c.value)}`).join(' · ')))), /*#__PURE__*/React.createElement("div", {
+  }, "Annulla"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn-primary",
+    onClick: confirmImport
+  }, /*#__PURE__*/React.createElement(Ic.check, null), " Conferma")))), /*#__PURE__*/React.createElement("div", {
     className: "bento-card span-12"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Inserisci cedolino"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Inserisci cedolino"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))',
       gap: 16,
       alignItems: 'end'
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "modal-field",
     style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
+      margin: 0
     }
-  }, "Mese (YYYY-MM)"), /*#__PURE__*/React.createElement("input", {
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "cf-month"
+  }, "Mese"), /*#__PURE__*/React.createElement("input", {
+    id: "cf-month",
+    type: "month",
     className: "input-cell",
     placeholder: "2026-04",
     value: form.month,
@@ -2293,17 +2802,17 @@ function CedoliniTab({
       ...f,
       month: e.target.value
     }))
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "modal-field",
     style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
+      margin: 0
     }
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "cf-netto"
   }, "Netto a pagare (\u20AC)"), /*#__PURE__*/React.createElement("input", {
+    id: "cf-netto",
     type: "number",
+    inputMode: "decimal",
     className: "input-cell",
     placeholder: "1550",
     value: form.netto,
@@ -2314,16 +2823,15 @@ function CedoliniTab({
     style: {
       textAlign: 'right'
     }
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "modal-field",
     style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
+      margin: 0
     }
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "cf-note"
   }, "Note (opzionale)"), /*#__PURE__*/React.createElement("input", {
+    id: "cf-note",
     className: "input-label",
     placeholder: "Arretrati, vigilanze, ecc.",
     value: form.note,
@@ -2338,22 +2846,17 @@ function CedoliniTab({
       justifyContent: 'center'
     }
   }, /*#__PURE__*/React.createElement(Ic.plus, null), " Aggiungi")), err && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 10,
-      fontSize: 12,
-      color: C.danger
-    }
-  }, err)), sorted.length > 1 && /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-12"
+    className: "inline-error",
+    role: "alert"
+  }, /*#__PURE__*/React.createElement(Ic.alert, {
+    size: 15
+  }), /*#__PURE__*/React.createElement("span", null, err))), sorted.length > 1 && /*#__PURE__*/React.createElement("div", {
+    className: "bento-card span-12 chart-card"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Trend netto mensile")), /*#__PURE__*/React.createElement("span", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Trend netto mensile")), /*#__PURE__*/React.createElement("span", {
     className: "mono-font",
     style: {
       fontSize: 11,
@@ -2361,41 +2864,30 @@ function CedoliniTab({
     }
   }, "media ", fmt(avg))), /*#__PURE__*/React.createElement(ResponsiveContainer, {
     width: "100%",
-    height: 240
+    height: scale.h(240, 190)
   }, /*#__PURE__*/React.createElement(LineChart, {
-    data: chartData
+    data: chartData,
+    margin: scale.margin
   }, /*#__PURE__*/React.createElement(CartesianGrid, {
     strokeDasharray: "2 4",
     stroke: C.border
-  }), /*#__PURE__*/React.createElement(XAxis, {
-    dataKey: "month",
-    stroke: C.textMuted,
-    tick: {
-      fontSize: 11
-    }
-  }), /*#__PURE__*/React.createElement(YAxis, {
-    stroke: C.textMuted,
-    tickFormatter: v => `${v}€`,
-    tick: {
-      fontSize: 11
-    }
-  }), /*#__PURE__*/React.createElement(Tooltip, {
-    contentStyle: {
-      background: C.bg,
-      border: `1px solid ${C.gold}`,
-      fontFamily: 'var(--font-number)',
-      fontSize: 12,
-      color: C.text,
-      borderRadius: 4
-    },
+  }), /*#__PURE__*/React.createElement(XAxis, _extends({
+    dataKey: "month"
+  }, scale.axis, {
+    minTickGap: scale.minTickGap
+  })), /*#__PURE__*/React.createElement(YAxis, _extends({}, scale.axis, {
+    width: scale.yWidth,
+    tickFormatter: fmtTick,
+    domain: [min => Math.max(0, Math.floor(min * 0.92 / 100) * 100), max => Math.ceil(max * 1.04 / 100) * 100]
+  })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
     formatter: v => [fmt(v), 'Netto']
-  }), /*#__PURE__*/React.createElement(Line, {
+  })), /*#__PURE__*/React.createElement(Line, {
     type: "monotone",
     dataKey: "netto",
     stroke: C.gold,
     strokeWidth: 2.5,
     dot: {
-      r: 5,
+      r: scale.narrow ? 3 : 5,
       fill: C.gold
     },
     name: "Netto"
@@ -2405,11 +2897,7 @@ function CedoliniTab({
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Cedolini registrati")), /*#__PURE__*/React.createElement("span", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Cedolini registrati")), /*#__PURE__*/React.createElement("span", {
     className: "mono-font",
     style: {
       fontSize: 11,
@@ -2417,16 +2905,19 @@ function CedoliniTab({
     }
   }, sorted.length, " mesi")), sorted.length === 0 ? /*#__PURE__*/React.createElement("div", {
     style: {
-      padding: 40,
+      padding: '32px 12px',
       textAlign: 'center',
       color: C.textMuted
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 32,
+      color: C.gold,
       marginBottom: 12
     }
-  }, "\uD83D\uDCC4"), /*#__PURE__*/React.createElement("p", null, "Nessun cedolino inserito. Usa il form sopra per aggiungere il netto mensile.")) : /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(Ic.receipt, {
+    size: 28
+  })), /*#__PURE__*/React.createElement("p", null, "Nessun cedolino inserito. Importa un PDF o una foto qui sopra, oppure inserisci il netto a mano.")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "desktop-table",
     style: {
       overflowX: 'auto'
     }
@@ -2451,9 +2942,8 @@ function CedoliniTab({
       color: C.textMuted,
       fontWeight: 500
     }
-  }, h)))), /*#__PURE__*/React.createElement("tbody", null, sorted.map((c, i) => {
-    const prev = sorted[i - 1];
-    const delta = prev ? c.netto - prev.netto : null;
+  }, h)))), /*#__PURE__*/React.createElement("tbody", null, sorted.map(c => {
+    const delta = deltaOf(c);
     const isActive = c.month === currentISO;
     return /*#__PURE__*/React.createElement("tr", {
       key: c.id,
@@ -2478,22 +2968,14 @@ function CedoliniTab({
       className: "mono-font",
       style: {
         padding: '12px 8px',
-        color: delta === null ? C.textMuted : delta >= 0 ? C.sage : C.rust
+        color: deltaColor(delta)
       }
-    }, delta === null ? '—' : `${delta >= 0 ? '+' : ''}${fmt(delta)}`), /*#__PURE__*/React.createElement("td", {
+    }, deltaText(delta)), /*#__PURE__*/React.createElement("td", {
       style: {
         padding: '12px 8px'
       }
     }, isActive && /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 10,
-        letterSpacing: '0.12em',
-        textTransform: 'uppercase',
-        color: C.gold,
-        border: `1px solid ${C.goldDim}`,
-        padding: '2px 8px',
-        borderRadius: 3
-      }
+      className: "badge badge-gold"
     }, "Mese corrente")), /*#__PURE__*/React.createElement("td", {
       style: {
         padding: '12px 8px',
@@ -2506,52 +2988,43 @@ function CedoliniTab({
         padding: '12px 8px'
       }
     }, /*#__PURE__*/React.createElement("button", {
+      className: "tx-action-btn danger",
       onClick: () => onRemove(c.id),
-      style: {
-        background: 'none',
-        border: 'none',
-        color: C.danger,
-        cursor: 'pointer',
-        opacity: 0.6,
-        transition: 'opacity 0.2s'
-      },
-      onMouseEnter: e => e.currentTarget.style.opacity = 1,
-      onMouseLeave: e => e.currentTarget.style.opacity = 0.6
+      "aria-label": `Elimina cedolino ${itMonthLabel(c.month)}`
     }, /*#__PURE__*/React.createElement(Ic.trash, null))));
-  }))))), sorted.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-4"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "Media netto"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: C.gold
-    }
-  }, fmt(avg)), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-sub"
-  }, sorted.length, " mesi registrati")), sorted.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-4 accent-rust"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "Netto minimo"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: C.rust
-    }
-  }, fmt(Math.min(...sorted.map(c => c.netto)))), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-sub"
-  }, sorted.reduce((m, c) => c.netto < m.netto ? c : m).month)), sorted.length > 0 && /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-4 accent-sage"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "Netto massimo"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: C.sage
-    }
-  }, fmt(Math.max(...sorted.map(c => c.netto)))), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-sub"
-  }, sorted.reduce((m, c) => c.netto > m.netto ? c : m).month)));
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "phone-list"
+  }, [...sorted].reverse().map(c => {
+    const delta = deltaOf(c);
+    const isActive = c.month === currentISO;
+    return /*#__PURE__*/React.createElement("div", {
+      key: c.id,
+      className: `m-row ${isActive ? 'is-active' : ''}`
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "m-row-title"
+    }, itMonthLabel(c.month)), /*#__PURE__*/React.createElement("div", {
+      className: "m-row-sub"
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: deltaColor(delta)
+      }
+    }, delta === null ? 'primo registrato' : deltaText(delta)), isActive && ' · mese corrente', c.note ? ` · ${c.note}` : '')), /*#__PURE__*/React.createElement("div", {
+      className: "m-row-end"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "m-row-value",
+      style: {
+        color: C.gold
+      }
+    }, fmt(c.netto)), /*#__PURE__*/React.createElement("button", {
+      className: "tx-action-btn danger",
+      onClick: () => onRemove(c.id),
+      "aria-label": `Elimina cedolino ${itMonthLabel(c.month)}`
+    }, /*#__PURE__*/React.createElement(Ic.trash, null))));
+  })))));
 }
 
 /* ── Investment helpers ── */
@@ -2585,6 +3058,7 @@ function InvestmentsTab({
   onUpdateTarget
 }) {
   const investments = data.investments;
+  const scale = useChartScale();
   const totalInvested = totals.totalInvestCurrent;
   const totalEntry = investments.reduce((s, i) => s + Number(i.entryValue || 0), 0);
   const weighted = investments.reduce((acc, i) => {
@@ -2600,15 +3074,16 @@ function InvestmentsTab({
     den: 0
   });
   const roiPct = weighted.den > 0 ? weighted.num / weighted.den * 100 : 0;
+  // Guadagno solo sulle posizioni con un capitale d'ingresso noto
+  const gain = investments.reduce((s, i) => {
+    const ev = Number(i.entryValue || 0);
+    return ev > 0 ? s + Number(i.current || 0) - ev : s;
+  }, 0);
   const allocMap = investments.reduce((acc, i) => {
     const t = i.type || 'Equity';
     acc[t] = (acc[t] || 0) + Number(i.current || 0);
     return acc;
   }, {});
-  const allocPie = Object.entries(allocMap).map(([name, value]) => ({
-    name,
-    value
-  }));
   const target = data.investmentsMeta.targetAllocation;
   const categories = Array.from(new Set([...Object.keys(target), ...Object.keys(allocMap)]));
   const allocBars = categories.map(cat => ({
@@ -2616,85 +3091,63 @@ function InvestmentsTab({
     Attuale: totalInvested > 0 ? +((allocMap[cat] || 0) / totalInvested * 100).toFixed(1) : 0,
     Target: Number(target[cat] || 0)
   }));
+  /* Allocazione per tipo, con la tacca sul target. Sostituisce la torta
+     senza etichette, che non diceva a quale tipo corrispondesse ogni colore. */
+  const typeParts = categories.map(cat => {
+    const share = totalInvested > 0 ? (allocMap[cat] || 0) / totalInvested : 0;
+    return {
+      name: cat,
+      value: allocMap[cat] || 0,
+      fill: share,
+      color: TYPE_COLORS[cat] || C.gold,
+      target: Number(target[cat] || 0),
+      share: `${(share * 100).toFixed(0)}% · target ${Number(target[cat] || 0)}%`
+    };
+  });
   const pipMonthly = 250;
   const pipYears = 36;
   const finA = pacMontante(pipMonthly, 0.0307, pipYears);
   const finB = pacMontante(pipMonthly, 0.0580, pipYears);
   const costOpportunity = finB - finA;
   const roadmapMonths = monthsUntil('2026-09-09');
-  const ttStyle = {
-    contentStyle: {
-      background: C.bg,
-      border: `1px solid ${C.gold}`,
-      fontFamily: 'var(--font-number)',
-      fontSize: 12,
-      color: C.text,
-      borderRadius: 4
-    },
-    itemStyle: {
-      color: C.textDim
-    },
-    labelStyle: {
-      color: C.gold
-    }
-  };
+  const TYPES = ['Equity', 'Pensione', 'Cripto', 'Bond', 'Liquidita'];
   return /*#__PURE__*/React.createElement("div", {
     className: "bento"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-3"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "Patrimonio investito"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: C.gold
-    }
-  }, fmt(totalInvested)), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-sub"
-  }, investments.length, " posizioni \xB7 capitale ", fmt(totalEntry))), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-3 accent-sage"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "Rendimento medio ponderato"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: roiPct >= 0 ? C.sage : C.rust
-    }
-  }, roiPct >= 0 ? '+' : '', roiPct.toFixed(2), "%"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-sub"
-  }, "media pesata su valore corrente")), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-3"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "PAC mensile totale"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: C.gold
-    }
-  }, fmt(totals.totalInvestMonthly)), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-sub"
-  }, "in accumulo automatico")), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-3 accent-rust"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "Peso su patrimonio netto"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: C.purple
-    }
-  }, totals.netWorth > 0 ? (totalInvested / totals.netWorth * 100).toFixed(1) : '0.0', "%"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-sub"
-  }, "su ", fmt(totals.netWorth), " totali")), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-12"
+  }, /*#__PURE__*/React.createElement(PageHero, {
+    label: "Patrimonio investito",
+    value: totalInvested,
+    meta: /*#__PURE__*/React.createElement(React.Fragment, null, totalEntry > 0 && /*#__PURE__*/React.createElement(HeroDelta, {
+      up: gain >= 0
+    }, fmt(Math.abs(gain)), " sul capitale"), /*#__PURE__*/React.createElement("span", null, investments.length, " ", investments.length === 1 ? 'posizione' : 'posizioni', " \xB7 capitale ", fmt(totalEntry))),
+    aside: /*#__PURE__*/React.createElement(PartBars, {
+      title: "Per tipo \xB7 attuale e target",
+      parts: typeParts,
+      total: totalInvested
+    })
+  }), /*#__PURE__*/React.createElement(StatStrip, {
+    items: [{
+      label: 'Rendimento medio ponderato',
+      value: `${roiPct >= 0 ? '+' : ''}${roiPct.toFixed(2)}%`,
+      color: roiPct >= 0 ? C.sage : C.rust,
+      hint: 'media pesata su valore corrente'
+    }, {
+      label: 'PAC mensile totale',
+      value: fmt(totals.totalInvestMonthly),
+      color: C.gold,
+      hint: 'in accumulo automatico'
+    }, {
+      label: 'Peso su patrimonio netto',
+      value: `${totals.netWorth > 0 ? (totalInvested / totals.netWorth * 100).toFixed(1) : '0.0'}%`,
+      color: C.purple,
+      hint: `su ${fmt(totals.netWorth)} totali`
+    }]
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "bento-card span-7"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Performance per posizione"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Performance per posizione"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
@@ -2730,13 +3183,13 @@ function InvestmentsTab({
         display: 'flex',
         alignItems: 'center',
         gap: 10,
-        flexWrap: 'wrap'
+        flexWrap: 'wrap',
+        minWidth: 0
       }
     }, /*#__PURE__*/React.createElement("span", {
       className: "display-font",
       style: {
         fontSize: 16,
-        fontStyle: 'italic',
         color: C.text
       }
     }, inv.label), /*#__PURE__*/React.createElement("span", {
@@ -2781,6 +3234,8 @@ function InvestmentsTab({
       style: {
         display: 'flex',
         justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '4px 12px',
         marginTop: 8,
         fontSize: 11
       },
@@ -2795,85 +3250,39 @@ function InvestmentsTab({
       }
     }, "PAC ", fmt(inv.monthly), "/m")));
   }))), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-6"
+    className: "bento-card span-5 chart-card"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Allocazione attuale per tipo"))), allocPie.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 40,
-      textAlign: 'center',
-      color: C.textMuted
-    }
-  }, "Nessun investimento.") : /*#__PURE__*/React.createElement(ResponsiveContainer, {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Attuale vs Target"))), /*#__PURE__*/React.createElement(ChartLegend, {
+    shape: "box",
+    items: [{
+      label: 'Attuale',
+      color: C.gold
+    }, {
+      label: 'Target',
+      color: C.sage
+    }]
+  }), /*#__PURE__*/React.createElement(ResponsiveContainer, {
     width: "100%",
-    height: 260
-  }, /*#__PURE__*/React.createElement(PieChart, null, /*#__PURE__*/React.createElement(Pie, {
-    data: allocPie,
-    dataKey: "value",
-    cx: "50%",
-    cy: "50%",
-    innerRadius: 55,
-    outerRadius: 95,
-    paddingAngle: 2,
-    label: ({
-      name,
-      percent
-    }) => percent > 0.04 ? `${name} ${(percent * 100).toFixed(0)}%` : '',
-    labelLine: false
-  }, allocPie.map((d, i) => /*#__PURE__*/React.createElement(Cell, {
-    key: i,
-    fill: TYPE_COLORS[d.name] || PIE_COLORS[i % PIE_COLORS.length]
-  }))), /*#__PURE__*/React.createElement(Tooltip, _extends({}, ttStyle, {
-    formatter: v => fmt(v)
-  }))))), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-6"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Attuale vs Target"))), /*#__PURE__*/React.createElement(ResponsiveContainer, {
-    width: "100%",
-    height: 220
+    height: scale.h(220, 190)
   }, /*#__PURE__*/React.createElement(BarChart, {
     data: allocBars,
-    margin: {
-      top: 10,
-      right: 10,
-      left: 0,
-      bottom: 0
-    }
+    margin: scale.margin
   }, /*#__PURE__*/React.createElement(CartesianGrid, {
     strokeDasharray: "2 4",
     stroke: C.border
-  }), /*#__PURE__*/React.createElement(XAxis, {
-    dataKey: "name",
-    stroke: C.textMuted,
-    tick: {
-      fontSize: 11
-    }
-  }), /*#__PURE__*/React.createElement(YAxis, {
-    stroke: C.textMuted,
-    tickFormatter: v => `${v}%`,
-    tick: {
-      fontSize: 11
-    }
-  }), /*#__PURE__*/React.createElement(Tooltip, _extends({}, ttStyle, {
+  }), /*#__PURE__*/React.createElement(XAxis, _extends({
+    dataKey: "name"
+  }, scale.axis, {
+    interval: 0
+  })), /*#__PURE__*/React.createElement(YAxis, _extends({}, scale.axis, {
+    width: scale.narrow ? 34 : 40,
+    tickFormatter: v => `${v}%`
+  })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_BAR, {
     formatter: v => `${v}%`
-  })), /*#__PURE__*/React.createElement(Legend, {
-    wrapperStyle: {
-      fontSize: 11
-    }
-  }), /*#__PURE__*/React.createElement(Bar, {
+  })), /*#__PURE__*/React.createElement(Bar, {
     dataKey: "Attuale",
     fill: C.gold,
     radius: [4, 4, 0, 0]
@@ -2885,8 +3294,9 @@ function InvestmentsTab({
     style: {
       marginTop: 14,
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
-      gap: 10
+      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 100px), 1fr))',
+      gap: 10,
+      alignItems: 'end'
     }
   }, Object.keys(target).map(cat => /*#__PURE__*/React.createElement("div", {
     key: cat,
@@ -2896,6 +3306,7 @@ function InvestmentsTab({
       gap: 4
     }
   }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: `tgt-${cat}`,
     style: {
       fontSize: 9,
       letterSpacing: '0.12em',
@@ -2903,7 +3314,9 @@ function InvestmentsTab({
       color: C.textMuted
     }
   }, cat, " target %"), /*#__PURE__*/React.createElement("input", {
+    id: `tgt-${cat}`,
     type: "number",
+    inputMode: "decimal",
     className: "input-cell mono-font",
     value: target[cat],
     onChange: e => onUpdateTarget(cat, e.target.value),
@@ -2916,14 +3329,10 @@ function InvestmentsTab({
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Analisi costo PIP (36 anni, 250\u20AC/m)"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Analisi costo PIP (36 anni, 250\u20AC/m)"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
       gap: 16
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -3029,14 +3438,13 @@ function InvestmentsTab({
   })), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
-      minWidth: 220
+      minWidth: 'min(100%, 220px)'
     }
   }, /*#__PURE__*/React.createElement("h4", {
     className: "display-font",
     style: {
       margin: '0 0 4px',
-      fontSize: 17,
-      fontStyle: 'italic'
+      fontSize: 17
     }
   }, "Roadmap settembre 2026"), /*#__PURE__*/React.createElement("div", {
     className: "mono-font",
@@ -3059,17 +3467,14 @@ function InvestmentsTab({
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Posizioni di investimento")), /*#__PURE__*/React.createElement("span", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Posizioni di investimento")), /*#__PURE__*/React.createElement("span", {
     className: "mono-font",
     style: {
       fontSize: 13,
       color: C.gold
     }
   }, fmt(totalInvested), " \xB7 +", fmt(totals.totalInvestMonthly), "/m")), /*#__PURE__*/React.createElement("div", {
+    className: "desktop-table",
     style: {
       overflowX: 'auto'
     }
@@ -3108,7 +3513,8 @@ function InvestmentsTab({
   }, /*#__PURE__*/React.createElement("input", {
     className: "input-label",
     value: inv.label,
-    onChange: e => onUpdateField('investments', inv.id, 'label', e.target.value)
+    onChange: e => onUpdateField('investments', inv.id, 'label', e.target.value),
+    "aria-label": "Posizione"
   })), /*#__PURE__*/React.createElement("td", {
     style: {
       padding: '4px 8px'
@@ -3117,7 +3523,8 @@ function InvestmentsTab({
     type: "number",
     className: "input-cell",
     value: inv.current,
-    onChange: e => onUpdateField('investments', inv.id, 'current', e.target.value)
+    onChange: e => onUpdateField('investments', inv.id, 'current', e.target.value),
+    "aria-label": "Valore attuale"
   })), /*#__PURE__*/React.createElement("td", {
     style: {
       padding: '4px 8px'
@@ -3126,7 +3533,8 @@ function InvestmentsTab({
     type: "number",
     className: "input-cell",
     value: inv.entryValue || 0,
-    onChange: e => onUpdateField('investments', inv.id, 'entryValue', e.target.value)
+    onChange: e => onUpdateField('investments', inv.id, 'entryValue', e.target.value),
+    "aria-label": "Capitale investito"
   })), /*#__PURE__*/React.createElement("td", {
     style: {
       padding: '4px 8px'
@@ -3135,7 +3543,8 @@ function InvestmentsTab({
     type: "number",
     className: "input-cell",
     value: inv.monthly,
-    onChange: e => onUpdateField('investments', inv.id, 'monthly', e.target.value)
+    onChange: e => onUpdateField('investments', inv.id, 'monthly', e.target.value),
+    "aria-label": "PAC mensile"
   })), /*#__PURE__*/React.createElement("td", {
     style: {
       padding: '4px 8px'
@@ -3146,8 +3555,11 @@ function InvestmentsTab({
     className: "input-cell",
     style: {
       background: C.card
-    }
-  }, /*#__PURE__*/React.createElement("option", null, "Equity"), /*#__PURE__*/React.createElement("option", null, "Pensione"), /*#__PURE__*/React.createElement("option", null, "Cripto"), /*#__PURE__*/React.createElement("option", null, "Bond"), /*#__PURE__*/React.createElement("option", null, "Liquidita"))), /*#__PURE__*/React.createElement("td", {
+    },
+    "aria-label": "Tipo"
+  }, TYPES.map(t => /*#__PURE__*/React.createElement("option", {
+    key: t
+  }, t)))), /*#__PURE__*/React.createElement("td", {
     style: {
       padding: '4px 8px'
     }
@@ -3157,7 +3569,8 @@ function InvestmentsTab({
     onChange: e => onUpdateField('investments', inv.id, 'risk', e.target.value),
     style: {
       fontSize: 12
-    }
+    },
+    "aria-label": "Rischio"
   })), /*#__PURE__*/React.createElement("td", {
     style: {
       padding: '4px 8px'
@@ -3165,13 +3578,79 @@ function InvestmentsTab({
   }, /*#__PURE__*/React.createElement("button", {
     className: "row-delete",
     onClick: () => onRemoveItem('investments', inv.id),
+    "aria-label": `Elimina ${inv.label}`,
     style: {
       background: 'none',
       border: 'none',
       color: C.danger,
       cursor: 'pointer'
     }
-  }, /*#__PURE__*/React.createElement(Ic.trash, null)))))))), /*#__PURE__*/React.createElement(AddBtn, {
+  }, /*#__PURE__*/React.createElement(Ic.trash, null)))))))), /*#__PURE__*/React.createElement("div", {
+    className: "phone-list"
+  }, investments.map(inv => /*#__PURE__*/React.createElement("div", {
+    key: inv.id,
+    className: "m-edit"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "m-edit-head"
+  }, /*#__PURE__*/React.createElement("input", {
+    className: "input-label",
+    value: inv.label,
+    "aria-label": "Nome della posizione",
+    onChange: e => onUpdateField('investments', inv.id, 'label', e.target.value)
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "row-delete",
+    onClick: () => onRemoveItem('investments', inv.id),
+    "aria-label": `Elimina ${inv.label}`,
+    style: {
+      background: 'none',
+      border: 'none',
+      color: C.danger,
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement(Ic.trash, null))), /*#__PURE__*/React.createElement("div", {
+    className: "m-edit-grid"
+  }, /*#__PURE__*/React.createElement("label", {
+    className: "m-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Valore attuale"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    className: "input-cell",
+    value: inv.current,
+    onChange: e => onUpdateField('investments', inv.id, 'current', e.target.value)
+  })), /*#__PURE__*/React.createElement("label", {
+    className: "m-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Capitale investito"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    className: "input-cell",
+    value: inv.entryValue || 0,
+    onChange: e => onUpdateField('investments', inv.id, 'entryValue', e.target.value)
+  })), /*#__PURE__*/React.createElement("label", {
+    className: "m-field"
+  }, /*#__PURE__*/React.createElement("span", null, "PAC mensile"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    className: "input-cell",
+    value: inv.monthly,
+    onChange: e => onUpdateField('investments', inv.id, 'monthly', e.target.value)
+  })), /*#__PURE__*/React.createElement("label", {
+    className: "m-field"
+  }, /*#__PURE__*/React.createElement("span", null, "Tipo"), /*#__PURE__*/React.createElement("select", {
+    value: inv.type,
+    onChange: e => onUpdateField('investments', inv.id, 'type', e.target.value),
+    className: "input-cell",
+    style: {
+      background: C.card
+    }
+  }, TYPES.map(t => /*#__PURE__*/React.createElement("option", {
+    key: t
+  }, t)))), /*#__PURE__*/React.createElement("label", {
+    className: "m-field m-field-wide"
+  }, /*#__PURE__*/React.createElement("span", null, "Rischio"), /*#__PURE__*/React.createElement("input", {
+    className: "input-label",
+    value: inv.risk,
+    onChange: e => onUpdateField('investments', inv.id, 'risk', e.target.value)
+  })))))), /*#__PURE__*/React.createElement(AddBtn, {
     onClick: () => onAddItem('investments', {
       label: 'Nuova posizione',
       current: 0,
@@ -3199,8 +3678,7 @@ function InvestmentsTab({
     className: "display-font",
     style: {
       margin: '0 0 8px',
-      fontSize: 16,
-      fontStyle: 'italic'
+      fontSize: 16
     }
   }, "Note sul PIP"), /*#__PURE__*/React.createElement("p", {
     style: {
@@ -3226,6 +3704,7 @@ function SentimentPanel({
     error: null,
     loading: true
   });
+  const scale = useChartScale();
   React.useEffect(() => {
     const ctrl = new AbortController();
     fetch('https://api.alternative.me/fng/?limit=7', {
@@ -3286,39 +3765,23 @@ function SentimentPanel({
   const fngCurrent = fng.data && fng.data.length > 0 ? fng.data[fng.data.length - 1] : null;
   const fngColor = v => v <= 25 ? C.danger : v <= 45 ? C.rust : v <= 55 ? C.gold : v <= 75 ? '#a0c774' : C.sage;
   const fngLabel = v => v <= 25 ? 'Extreme Fear' : v <= 45 ? 'Fear' : v <= 55 ? 'Neutral' : v <= 75 ? 'Greed' : 'Extreme Greed';
-  const ttStyle = {
-    contentStyle: {
-      background: C.bg,
-      border: `1px solid ${C.gold}`,
-      fontFamily: 'var(--font-number)',
-      fontSize: 12,
-      color: C.text,
-      borderRadius: 4
-    },
-    itemStyle: {
-      color: C.textDim
-    },
-    labelStyle: {
-      color: C.gold
-    }
-  };
   return /*#__PURE__*/React.createElement("div", {
     className: "bento-card span-12"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Sentiment & feed live"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Sentiment & feed live"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',
       gap: 20
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
     className: "card-eyebrow",
     style: {
       marginBottom: 12
@@ -3351,23 +3814,19 @@ function SentimentPanel({
     width: "100%",
     height: 120
   }, /*#__PURE__*/React.createElement(LineChart, {
-    data: fng.data
+    data: fng.data,
+    margin: scale.margin
   }, /*#__PURE__*/React.createElement(CartesianGrid, {
     strokeDasharray: "2 4",
     stroke: C.border
-  }), /*#__PURE__*/React.createElement(XAxis, {
-    dataKey: "date",
-    stroke: C.textMuted,
-    tick: {
-      fontSize: 10
-    }
-  }), /*#__PURE__*/React.createElement(YAxis, {
-    stroke: C.textMuted,
-    domain: [0, 100],
-    tick: {
-      fontSize: 10
-    }
-  }), /*#__PURE__*/React.createElement(Tooltip, ttStyle), /*#__PURE__*/React.createElement(Line, {
+  }), /*#__PURE__*/React.createElement(XAxis, _extends({
+    dataKey: "date"
+  }, scale.axis, {
+    minTickGap: scale.minTickGap
+  })), /*#__PURE__*/React.createElement(YAxis, _extends({}, scale.axis, {
+    width: 30,
+    domain: [0, 100]
+  })), /*#__PURE__*/React.createElement(Tooltip, TT_LINE), /*#__PURE__*/React.createElement(Line, {
     type: "monotone",
     dataKey: "value",
     stroke: C.gold,
@@ -3376,7 +3835,11 @@ function SentimentPanel({
       r: 3,
       fill: C.gold
     }
-  }))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
     className: "card-eyebrow",
     style: {
       marginBottom: 12
@@ -3450,11 +3913,11 @@ function SentimentPanel({
         background: 'transparent',
         border: `1px solid ${C.goldDim}`,
         color: C.gold,
-        padding: '4px 8px',
-        fontSize: 10,
-        letterSpacing: '0.08em',
+        padding: '4px 10px',
+        fontSize: 11,
+        letterSpacing: '0.06em',
         cursor: 'pointer',
-        borderRadius: 4,
+        borderRadius: 6,
         whiteSpace: 'nowrap'
       }
     }, "+ Watchlist"));
@@ -3462,6 +3925,7 @@ function SentimentPanel({
 }
 
 /* ── Markets Tab ── */
+const POSITION_STATUSES = ['Aperta', 'Chiusa', 'Vinta', 'Persa'];
 function MarketsTab({
   markets,
   onAdd,
@@ -3482,6 +3946,7 @@ function MarketsTab({
   });
   const [err, setErr] = React.useState('');
   const formRef = React.useRef(null);
+  const scale = useChartScale();
   const handlePrefill = React.useCallback(p => {
     setForm(f => ({
       ...f,
@@ -3553,286 +4018,71 @@ function MarketsTab({
     return s;
   }, 0);
   const unrealizedPnl = open.reduce((s, p) => s + p.capitalRisked * ((p.currentProb - p.entryProb) / Math.max(1, p.entryProb)), 0);
-  const winRate = won.length + lost.length > 0 ? won.length / (won.length + lost.length) * 100 : 0;
-  const ttStyle = {
-    contentStyle: {
-      background: C.bg,
-      border: `1px solid ${C.gold}`,
-      fontFamily: 'var(--font-number)',
-      fontSize: 12,
-      color: C.text,
-      borderRadius: 4
-    },
-    itemStyle: {
-      color: C.textDim
-    },
-    labelStyle: {
-      color: C.gold
-    }
+  const closedCount = won.length + lost.length;
+  const winRate = closedCount > 0 ? won.length / closedCount * 100 : 0;
+  const positionPnl = p => {
+    const delta = p.currentProb - p.entryProb;
+    if (p.status === 'Aperta') return p.capitalRisked * (delta / Math.max(1, p.entryProb));
+    if (p.status === 'Vinta') return p.capitalRisked * ((100 - p.entryProb) / Math.max(1, p.entryProb));
+    if (p.status === 'Persa') return -p.capitalRisked;
+    return 0;
+  };
+  const money = (p, v) => p.currency === 'USDC' ? fmtUSD(v) : fmtEUR2(v);
+  const signed = v => `${v >= 0 ? '+' : ''}${fmtEUR2(v)}`;
+  const labelStyle = {
+    fontSize: 10,
+    color: C.textMuted,
+    letterSpacing: '0.15em',
+    textTransform: 'uppercase',
+    display: 'block',
+    marginBottom: 6
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "bento"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-12",
-    ref: formRef
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Aggiungi posizione"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-      gap: 14,
-      alignItems: 'end'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      gridColumn: 'span 2',
-      minWidth: 220
-    }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
-  }, "Mercato"), /*#__PURE__*/React.createElement("input", {
-    className: "input-cell",
-    placeholder: "Es. Trump wins 2028",
-    value: form.market,
-    onChange: e => setForm(f => ({
-      ...f,
-      market: e.target.value
-    }))
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
-  }, "Outcome"), /*#__PURE__*/React.createElement("input", {
-    className: "input-cell",
-    placeholder: "YES / NO",
-    value: form.outcome,
-    onChange: e => setForm(f => ({
-      ...f,
-      outcome: e.target.value
-    }))
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
-  }, "Valuta"), /*#__PURE__*/React.createElement("select", {
-    className: "input-cell",
-    value: form.currency,
-    onChange: e => setForm(f => ({
-      ...f,
-      currency: e.target.value
-    })),
-    style: {
-      background: C.card
-    }
-  }, /*#__PURE__*/React.createElement("option", null, "USDC"), /*#__PURE__*/React.createElement("option", null, "EUR"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
-  }, "Capitale"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    className: "input-cell",
-    placeholder: "100",
-    value: form.capitalRisked,
-    onChange: e => setForm(f => ({
-      ...f,
-      capitalRisked: e.target.value
-    })),
-    style: {
-      textAlign: 'right'
-    }
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
-  }, "Prob. ingresso %"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    className: "input-cell",
-    placeholder: "35",
-    value: form.entryProb,
-    onChange: e => setForm(f => ({
-      ...f,
-      entryProb: e.target.value
-    })),
-    style: {
-      textAlign: 'right'
-    }
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
-  }, "Prob. attuale %"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    className: "input-cell",
-    placeholder: "42",
-    value: form.currentProb,
-    onChange: e => setForm(f => ({
-      ...f,
-      currentProb: e.target.value
-    })),
-    style: {
-      textAlign: 'right'
-    }
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
-  }, "Scadenza"), /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    className: "input-cell",
-    value: form.deadline,
-    onChange: e => setForm(f => ({
-      ...f,
-      deadline: e.target.value
-    }))
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      gridColumn: 'span 2',
-      minWidth: 220
-    }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
-  }, "Note"), /*#__PURE__*/React.createElement("input", {
-    className: "input-label",
-    placeholder: "Tesi, fonte, link\u2026",
-    value: form.note,
-    onChange: e => setForm(f => ({
-      ...f,
-      note: e.target.value
-    }))
-  })), /*#__PURE__*/React.createElement("button", {
-    onClick: handleAdd,
-    style: {
-      background: C.gold,
-      border: 'none',
-      color: C.onAccent,
-      padding: '10px 20px',
-      cursor: 'pointer',
-      fontFamily: 'inherit',
-      fontSize: 12,
-      fontWeight: 600,
-      letterSpacing: '0.08em',
-      borderRadius: 6,
-      whiteSpace: 'nowrap',
-      height: 42
-    }
-  }, "+ Aggiungi")), err && /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginTop: 10,
-      fontSize: 12,
-      color: C.danger
-    }
-  }, err)), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-3"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "Capitale a rischio (aperte)"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: C.gold
-    }
-  }, fmt(totalRiskEur)), /*#__PURE__*/React.createElement("div", {
-    className: "mono-font",
-    style: {
-      fontSize: 11,
-      color: C.textDim,
-      marginTop: 8,
-      lineHeight: 1.6
-    }
-  }, "EUR: ", fmtEUR2(openEur), /*#__PURE__*/React.createElement("br", null), "USDC: ", fmtUSD(openUsd))), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-3 accent-sage"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "P&L realizzato"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: realizedPnl >= 0 ? C.sage : C.rust
-    }
-  }, realizedPnl >= 0 ? '+' : '', fmtEUR2(realizedPnl)), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-sub"
-  }, won.length, " vinte \xB7 ", lost.length, " perse")), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-3"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "P&L non realizzato"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: unrealizedPnl >= 0 ? C.sage : C.rust
-    }
-  }, unrealizedPnl >= 0 ? '+' : '', fmtEUR2(unrealizedPnl)), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-sub"
-  }, "mark-to-market aperte")), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-3 accent-rust"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow"
-  }, "Win rate"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-value",
-    style: {
-      color: winRate >= 50 ? C.sage : C.rust
-    }
-  }, winRate.toFixed(1), "%"), /*#__PURE__*/React.createElement("div", {
-    className: "kpi-sub"
-  }, "su ", won.length + lost.length, " chiuse")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(PageHero, {
+    label: "P&L realizzato",
+    value: realizedPnl,
+    format: signed,
+    tone: realizedPnl >= 0 ? C.sage : C.rust,
+    meta: /*#__PURE__*/React.createElement("span", null, won.length, " vinte \xB7 ", lost.length, " perse \xB7 ", open.length, " aperte"),
+    aside: /*#__PURE__*/React.createElement("div", {
+      className: "arc-stat"
+    }, /*#__PURE__*/React.createElement(ArcMeter, {
+      pct: winRate / 100,
+      color: closedCount === 0 ? C.textMuted : winRate >= 50 ? C.sage : C.rust,
+      size: 84
+    }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      className: "aside-label",
+      style: {
+        marginBottom: 6
+      }
+    }, "Win rate"), /*#__PURE__*/React.createElement("div", {
+      className: "stat-value",
+      style: {
+        color: closedCount === 0 ? C.textDim : winRate >= 50 ? C.sage : C.rust
+      }
+    }, winRate.toFixed(1), "%"), /*#__PURE__*/React.createElement("div", {
+      className: "stat-hint"
+    }, closedCount === 0 ? 'nessuna posizione chiusa' : `su ${closedCount} chiuse`)))
+  }), /*#__PURE__*/React.createElement(StatStrip, {
+    items: [{
+      label: 'Capitale a rischio (aperte)',
+      value: fmt(totalRiskEur),
+      color: C.gold,
+      hint: `EUR ${fmtEUR2(openEur)} · USDC ${fmtUSD(openUsd)}`
+    }, {
+      label: 'P&L non realizzato',
+      value: signed(unrealizedPnl),
+      color: unrealizedPnl >= 0 ? C.sage : C.rust,
+      hint: 'mark-to-market aperte'
+    }]
+  }), /*#__PURE__*/React.createElement("div", {
     className: "bento-card span-12"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Posizioni")), /*#__PURE__*/React.createElement("span", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Posizioni")), /*#__PURE__*/React.createElement("span", {
     className: "mono-font",
     style: {
       fontSize: 11,
@@ -3840,11 +4090,12 @@ function MarketsTab({
     }
   }, positions.length, " totali")), positions.length === 0 ? /*#__PURE__*/React.createElement("div", {
     style: {
-      padding: 40,
+      padding: '32px 12px',
       textAlign: 'center',
       color: C.textMuted
     }
-  }, /*#__PURE__*/React.createElement("p", null, "Nessuna posizione. Usa il form sopra per aggiungerne una.")) : /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("p", null, "Nessuna posizione. Aggiungine una dal modulo qui sotto o dalla watchlist Polymarket.")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "desktop-table",
     style: {
       overflowX: 'auto'
     }
@@ -3874,7 +4125,7 @@ function MarketsTab({
     const delta = p.currentProb - p.entryProb;
     const quota = (100 / Math.max(1, p.entryProb)).toFixed(2);
     const isOpen = p.status === 'Aperta';
-    const pnl = isOpen ? p.capitalRisked * (delta / Math.max(1, p.entryProb)) : p.status === 'Vinta' ? p.capitalRisked * ((100 - p.entryProb) / Math.max(1, p.entryProb)) : p.status === 'Persa' ? -p.capitalRisked : 0;
+    const pnl = positionPnl(p);
     const rowBg = p.status === 'Vinta' ? 'rgba(107,142,111,0.10)' : p.status === 'Persa' ? 'rgba(197,69,69,0.10)' : isOpen && p.currentProb > p.entryProb ? 'var(--accent-soft)' : 'transparent';
     return /*#__PURE__*/React.createElement("tr", {
       key: p.id,
@@ -3910,7 +4161,7 @@ function MarketsTab({
         padding: '8px 6px',
         color: C.gold
       }
-    }, p.currency === 'USDC' ? fmtUSD(p.capitalRisked) : fmtEUR2(p.capitalRisked)), /*#__PURE__*/React.createElement("td", {
+    }, money(p, p.capitalRisked)), /*#__PURE__*/React.createElement("td", {
       className: "mono-font",
       style: {
         padding: '8px 6px'
@@ -3929,7 +4180,8 @@ function MarketsTab({
         fontSize: 12,
         padding: '4px 2px',
         textAlign: 'right'
-      }
+      },
+      "aria-label": "Probabilit\xE0 attuale"
     })), /*#__PURE__*/React.createElement("td", {
       className: "mono-font",
       style: {
@@ -3948,7 +4200,7 @@ function MarketsTab({
         padding: '8px 6px',
         color: pnl >= 0 ? C.sage : C.rust
       }
-    }, pnl >= 0 ? '+' : '', p.currency === 'USDC' ? fmtUSD(pnl) : fmtEUR2(pnl)), /*#__PURE__*/React.createElement("td", {
+    }, pnl >= 0 ? '+' : '', money(p, pnl)), /*#__PURE__*/React.createElement("td", {
       className: "mono-font",
       style: {
         padding: '8px 6px',
@@ -3967,32 +4219,204 @@ function MarketsTab({
         background: C.card,
         fontSize: 11,
         padding: '4px 2px'
-      }
-    }, /*#__PURE__*/React.createElement("option", null, "Aperta"), /*#__PURE__*/React.createElement("option", null, "Chiusa"), /*#__PURE__*/React.createElement("option", null, "Vinta"), /*#__PURE__*/React.createElement("option", null, "Persa"))), /*#__PURE__*/React.createElement("td", {
+      },
+      "aria-label": "Stato"
+    }, POSITION_STATUSES.map(s => /*#__PURE__*/React.createElement("option", {
+      key: s
+    }, s)))), /*#__PURE__*/React.createElement("td", {
       style: {
         padding: '8px 6px'
       }
     }, /*#__PURE__*/React.createElement("button", {
+      className: "tx-action-btn danger",
       onClick: () => onRemove(p.id),
-      style: {
-        background: 'none',
-        border: 'none',
-        color: C.danger,
-        cursor: 'pointer',
-        opacity: 0.6
-      }
+      "aria-label": `Elimina ${p.market}`
     }, /*#__PURE__*/React.createElement(Ic.trash, null))));
-  }))))), /*#__PURE__*/React.createElement("div", {
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "phone-list"
+  }, positions.map(p => {
+    const pnl = positionPnl(p);
+    const quota = (100 / Math.max(1, p.entryProb)).toFixed(2);
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.id,
+      className: "m-card"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "m-row-top"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "m-row-title"
+    }, p.market), /*#__PURE__*/React.createElement("span", {
+      className: "m-row-value",
+      style: {
+        color: pnl >= 0 ? C.sage : C.rust
+      }
+    }, pnl >= 0 ? '+' : '', money(p, pnl))), /*#__PURE__*/React.createElement("div", {
+      className: "m-row-sub"
+    }, p.outcome, " \xB7 ", money(p, p.capitalRisked), " \xB7 quota ", quota, "x", p.deadline ? ` · scad. ${p.deadline}` : ''), /*#__PURE__*/React.createElement("div", {
+      className: "m-card-controls"
+    }, /*#__PURE__*/React.createElement("label", {
+      className: "m-field"
+    }, /*#__PURE__*/React.createElement("span", null, "Prob. att. (ingr. ", p.entryProb, "%)"), /*#__PURE__*/React.createElement("input", {
+      type: "number",
+      inputMode: "decimal",
+      className: "input-cell",
+      value: p.currentProb,
+      onChange: e => onUpdate(p.id, 'currentProb', e.target.value)
+    })), /*#__PURE__*/React.createElement("label", {
+      className: "m-field"
+    }, /*#__PURE__*/React.createElement("span", null, "Stato"), /*#__PURE__*/React.createElement("select", {
+      value: p.status,
+      onChange: e => onClose(p.id, e.target.value),
+      className: "input-cell",
+      style: {
+        background: C.card
+      }
+    }, POSITION_STATUSES.map(s => /*#__PURE__*/React.createElement("option", {
+      key: s
+    }, s)))), /*#__PURE__*/React.createElement("button", {
+      className: "tx-action-btn danger",
+      onClick: () => onRemove(p.id),
+      "aria-label": `Elimina ${p.market}`
+    }, /*#__PURE__*/React.createElement(Ic.trash, null))));
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "bento-card span-12",
+    ref: formRef,
+    style: {
+      scrollMarginTop: 80
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    className: "card-title"
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    className: "diamond"
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Aggiungi posizione"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 140px), 1fr))',
+      gap: 14,
+      alignItems: 'end'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      gridColumn: '1 / -1'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: labelStyle
+  }, "Mercato"), /*#__PURE__*/React.createElement("input", {
+    className: "input-cell",
+    placeholder: "Es. Trump wins 2028",
+    value: form.market,
+    onChange: e => setForm(f => ({
+      ...f,
+      market: e.target.value
+    }))
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: labelStyle
+  }, "Outcome"), /*#__PURE__*/React.createElement("input", {
+    className: "input-cell",
+    placeholder: "YES / NO",
+    value: form.outcome,
+    onChange: e => setForm(f => ({
+      ...f,
+      outcome: e.target.value
+    }))
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: labelStyle
+  }, "Valuta"), /*#__PURE__*/React.createElement("select", {
+    className: "input-cell",
+    value: form.currency,
+    onChange: e => setForm(f => ({
+      ...f,
+      currency: e.target.value
+    })),
+    style: {
+      background: C.card
+    }
+  }, /*#__PURE__*/React.createElement("option", null, "USDC"), /*#__PURE__*/React.createElement("option", null, "EUR"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: labelStyle
+  }, "Capitale"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    className: "input-cell",
+    placeholder: "100",
+    value: form.capitalRisked,
+    onChange: e => setForm(f => ({
+      ...f,
+      capitalRisked: e.target.value
+    })),
+    style: {
+      textAlign: 'right'
+    }
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: labelStyle
+  }, "Prob. ingresso %"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    className: "input-cell",
+    placeholder: "35",
+    value: form.entryProb,
+    onChange: e => setForm(f => ({
+      ...f,
+      entryProb: e.target.value
+    })),
+    style: {
+      textAlign: 'right'
+    }
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: labelStyle
+  }, "Prob. attuale %"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    className: "input-cell",
+    placeholder: "42",
+    value: form.currentProb,
+    onChange: e => setForm(f => ({
+      ...f,
+      currentProb: e.target.value
+    })),
+    style: {
+      textAlign: 'right'
+    }
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: labelStyle
+  }, "Scadenza"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    className: "input-cell",
+    value: form.deadline,
+    onChange: e => setForm(f => ({
+      ...f,
+      deadline: e.target.value
+    }))
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      gridColumn: '1 / -1'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: labelStyle
+  }, "Note"), /*#__PURE__*/React.createElement("input", {
+    className: "input-label",
+    placeholder: "Tesi, fonte, link\u2026",
+    value: form.note,
+    onChange: e => setForm(f => ({
+      ...f,
+      note: e.target.value
+    }))
+  })), /*#__PURE__*/React.createElement("button", {
+    className: "btn-primary",
+    onClick: handleAdd,
+    style: {
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement(Ic.plus, null), " Aggiungi")), err && /*#__PURE__*/React.createElement("div", {
+    className: "inline-error",
+    role: "alert"
+  }, /*#__PURE__*/React.createElement(Ic.alert, {
+    size: 15
+  }), /*#__PURE__*/React.createElement("span", null, err))), /*#__PURE__*/React.createElement("div", {
     className: "bento-card span-6"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Kelly Criterion (posizioni aperte)"))), open.length === 0 ? /*#__PURE__*/React.createElement("div", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Kelly Criterion (posizioni aperte)"))), open.length === 0 ? /*#__PURE__*/React.createElement("div", {
     style: {
       color: C.textMuted,
       fontSize: 12,
@@ -4049,42 +4473,35 @@ function MarketsTab({
       lineHeight: 1.5
     }
   }, "Kelly indica la dimensione ottimale teorica della posizione per massimizzare la crescita del bankroll nel lungo periodo. Valori alti vanno dimezzati (Half-Kelly) per prudenza.")), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-6"
+    className: "bento-card span-6 chart-card"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "P&L realizzato cumulativo"))), !markets.pnlHistory || markets.pnlHistory.length === 0 ? /*#__PURE__*/React.createElement("div", {
     style: {
-      fontStyle: 'italic'
-    }
-  }, "P&L realizzato cumulativo"))), !markets.pnlHistory || markets.pnlHistory.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 40,
+      padding: '32px 12px',
       textAlign: 'center',
       color: C.textMuted,
       fontSize: 12
     }
   }, "Chiudi le prime posizioni per vedere il grafico.") : /*#__PURE__*/React.createElement(ResponsiveContainer, {
     width: "100%",
-    height: 240
+    height: scale.h(240, 190)
   }, /*#__PURE__*/React.createElement(LineChart, {
-    data: markets.pnlHistory
+    data: markets.pnlHistory,
+    margin: scale.margin
   }, /*#__PURE__*/React.createElement(CartesianGrid, {
     strokeDasharray: "2 4",
     stroke: C.border
-  }), /*#__PURE__*/React.createElement(XAxis, {
-    dataKey: "date",
-    stroke: C.textMuted,
-    tick: {
-      fontSize: 11
-    }
-  }), /*#__PURE__*/React.createElement(YAxis, {
-    stroke: C.textMuted,
-    tick: {
-      fontSize: 11
-    }
-  }), /*#__PURE__*/React.createElement(Tooltip, _extends({}, ttStyle, {
+  }), /*#__PURE__*/React.createElement(XAxis, _extends({
+    dataKey: "date"
+  }, scale.axis, {
+    minTickGap: scale.minTickGap
+  })), /*#__PURE__*/React.createElement(YAxis, _extends({}, scale.axis, {
+    width: scale.yWidth,
+    tickFormatter: fmtTick
+  })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
     formatter: v => fmtEUR2(v)
   })), /*#__PURE__*/React.createElement(Line, {
     type: "monotone",
@@ -4107,17 +4524,11 @@ function MarketsTab({
       flexWrap: 'wrap'
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em',
-      textTransform: 'uppercase',
-      display: 'block',
-      marginBottom: 6
-    }
+    style: labelStyle
   }, "Tasso EUR/USD"), /*#__PURE__*/React.createElement("input", {
     type: "number",
     step: "0.0001",
+    inputMode: "decimal",
     className: "input-cell mono-font",
     value: markets.eurUsdRate,
     onChange: e => onUpdateRate(e.target.value),
@@ -4130,7 +4541,7 @@ function MarketsTab({
       fontSize: 11,
       color: C.textMuted,
       flex: 1,
-      minWidth: 220
+      minWidth: 'min(100%, 220px)'
     }
   }, "Usato per convertire le posizioni USDC in EUR nei KPI. 1 EUR = ", Number(markets.eurUsdRate).toFixed(4), " USD."))));
 }
@@ -4191,58 +4602,6 @@ function StatusBadge({
   return /*#__PURE__*/React.createElement("span", {
     className: `badge ${STATUS_BADGE[status] || 'badge-neutral'}`
   }, status || '—');
-}
-function SummaryCard({
-  label,
-  value,
-  hint,
-  trend,
-  accent,
-  invertTrend
-}) {
-  const has = trend !== null && trend !== undefined && isFinite(trend);
-  const positive = invertTrend ? trend < 0 : trend > 0;
-  const TrendIc = trend >= 0 ? Ic.up : Ic.down;
-  return /*#__PURE__*/React.createElement("div", {
-    className: `bento-card span-3 ${accent || ''}`
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow",
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.14em',
-      textTransform: 'uppercase'
-    }
-  }, label), /*#__PURE__*/React.createElement("div", {
-    className: "display-font number-display",
-    style: {
-      fontSize: 30,
-      marginTop: 8,
-      lineHeight: 1.1
-    }
-  }, value), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      marginTop: 10,
-      flexWrap: 'wrap'
-    }
-  }, has && trend !== 0 && /*#__PURE__*/React.createElement("span", {
-    className: "mono-font",
-    style: {
-      fontSize: 11,
-      color: positive ? C.sage : C.rust,
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 3
-    }
-  }, /*#__PURE__*/React.createElement(TrendIc, null), " ", fmtPct(Math.abs(trend))), hint && /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      color: C.textMuted
-    }
-  }, hint)));
 }
 function TransactionFilters({
   filters,
@@ -4583,11 +4942,16 @@ function TransactionTable({
     checked: sel.has(t.id),
     onChange: () => onToggleRow && onToggleRow(t.id),
     "aria-label": `Seleziona ${t.description || 'movimento'}`
-  }), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "tx-row-open",
+    onClick: () => onEdit(t),
+    title: "Modifica movimento"
+  }, /*#__PURE__*/React.createElement("span", {
     className: "tx-row-main"
-  }, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", {
     className: "tx-row-desc"
-  }, t.description || '—'), /*#__PURE__*/React.createElement("div", {
+  }, t.description || '—'), /*#__PURE__*/React.createElement("span", {
     className: "tx-row-sub"
   }, /*#__PURE__*/React.createElement("span", {
     className: "tx-row-day"
@@ -4597,28 +4961,19 @@ function TransactionTable({
     status: t.status
   }), t.paymentMethod && /*#__PURE__*/React.createElement("span", {
     className: "tx-row-method"
-  }, t.paymentMethod))), /*#__PURE__*/React.createElement("div", {
+  }, t.paymentMethod))), /*#__PURE__*/React.createElement("span", {
     className: "tx-row-right"
   }, /*#__PURE__*/React.createElement(AmountDisplay, {
     amount: t.amount,
     type: t.type,
     size: 17
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "tx-row-actions"
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "tx-action-btn",
-    "aria-label": `Modifica ${t.description || 'movimento'}`,
-    onClick: () => onEdit(t)
-  }, /*#__PURE__*/React.createElement(Ic.edit, null)), /*#__PURE__*/React.createElement("button", {
-    className: "tx-action-btn danger",
-    "aria-label": `Elimina ${t.description || 'movimento'}`,
-    onClick: () => onDelete(t)
-  }, /*#__PURE__*/React.createElement(Ic.trash, null))))))))));
+  })))))))));
 }
 function TransactionModal({
   initial,
   onSave,
-  onClose
+  onClose,
+  onDelete
 }) {
   const seed = initial || {
     type: 'expense',
@@ -4697,7 +5052,10 @@ function TransactionModal({
     }
   }, /*#__PURE__*/React.createElement("form", {
     className: "modal-card",
-    onSubmit: submit
+    onSubmit: submit,
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": editing ? 'Modifica movimento' : 'Nuovo movimento'
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -4821,13 +5179,15 @@ function TransactionModal({
   }, /*#__PURE__*/React.createElement(Ic.alert, {
     size: 14
   }), " ", err), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'flex-end',
-      gap: 10,
-      marginTop: 6
-    }
-  }, /*#__PURE__*/React.createElement("button", {
+    className: "modal-actions"
+  }, editing && onDelete && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn-danger modal-delete",
+    onClick: onDelete,
+    "aria-label": "Elimina movimento"
+  }, /*#__PURE__*/React.createElement(Ic.trash, null), /*#__PURE__*/React.createElement("span", {
+    className: "modal-delete-label"
+  }, "Elimina")), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn-ghost",
     onClick: onClose
@@ -4842,11 +5202,13 @@ function ImportStatementModal({
   onClose
 }) {
   const [stage, setStage] = useState('pick'); // pick | loading | review
-  const [loadingMsg, setLoadingMsg] = useState('');
+  const [loading, setLoading] = useState({
+    msg: '',
+    pct: null
+  });
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState('');
   const [dragging, setDragging] = useState(false);
-  const fileRef = useRef(null);
   useEffect(() => {
     const onKey = e => {
       if (e.key === 'Escape') onClose();
@@ -4858,14 +5220,20 @@ function ImportStatementModal({
     if (!file) return;
     setErr('');
     setStage('loading');
-    setLoadingMsg('Lettura del file…');
+    setLoading({
+      msg: 'Leggo il file…',
+      pct: null
+    });
     try {
       const name = (file.name || '').toLowerCase();
       let parsed = [];
       if (name.endsWith('.csv') || file.type === 'text/csv' || file.type === 'application/vnd.ms-excel') {
         parsed = parseStatementCSV(await file.text());
       } else {
-        const text = await extractTextFromFile(file, m => setLoadingMsg(m));
+        const text = await extractTextFromFile(file, (msg, pct) => setLoading({
+          msg,
+          pct: pct === undefined ? null : pct
+        }));
         parsed = parseStatementText(text);
         if (!parsed.length) parsed = parseStatementCSV(text);
       }
@@ -4891,9 +5259,15 @@ function ImportStatementModal({
       setRows(prepared);
       setStage('review');
     } catch (e) {
-      setErr('Errore nella lettura del file: ' + (e && e.message ? e.message : e));
+      console.error(e);
+      setErr(describeImportError(e));
       setStage('pick');
     }
+  };
+  const onPick = e => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (f) handleFile(f);
   };
   const onDrop = e => {
     e.preventDefault();
@@ -4948,7 +5322,10 @@ function ImportStatementModal({
       if (e.target === e.currentTarget) onClose();
     }
   }, /*#__PURE__*/React.createElement("div", {
-    className: `modal-card ${stage === 'review' ? 'modal-card-wide' : ''}`
+    className: `modal-card ${stage === 'review' ? 'modal-card-wide' : ''}`,
+    role: "dialog",
+    "aria-modal": "true",
+    "aria-label": "Importa estratto conto"
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -4960,52 +5337,43 @@ function ImportStatementModal({
     className: "display-font",
     style: {
       margin: 0,
-      fontSize: 20,
-      fontStyle: 'italic'
+      fontSize: 20
     }
   }, "Importa estratto conto"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "tx-action-btn",
     onClick: onClose,
     "aria-label": "Chiudi"
-  }, /*#__PURE__*/React.createElement(Ic.x, null))), stage === 'pick' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(Ic.x, null))), stage === 'pick' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      paddingBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    id: "statement-file",
+    className: "file-input",
+    type: "file",
+    accept: ".csv,text/csv,application/pdf,image/*",
+    onChange: onPick
+  }), /*#__PURE__*/React.createElement("label", {
+    htmlFor: "statement-file",
     className: `dropzone ${dragging ? 'dragging' : ''}`,
-    onClick: () => fileRef.current && fileRef.current.click(),
     onDragOver: e => {
       e.preventDefault();
       setDragging(true);
     },
     onDragLeave: () => setDragging(false),
     onDrop: onDrop
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      marginBottom: 8
-    }
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-icon"
   }, /*#__PURE__*/React.createElement(Ic.upload, {
     size: 22
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13,
-      marginBottom: 4
-    }
-  }, "Trascina qui il file oppure clicca per selezionarlo"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: C.textMuted
-    }
-  }, "CSV esportato dalla banca \xB7 PDF dell'estratto conto (testo selezionabile)"), /*#__PURE__*/React.createElement("input", {
-    ref: fileRef,
-    type: "file",
-    accept: ".csv,text/csv,application/pdf,image/*",
-    style: {
-      display: 'none'
-    },
-    onChange: e => {
-      const f = e.target.files && e.target.files[0];
-      if (f) handleFile(f);
-      e.target.value = '';
-    }
-  })), /*#__PURE__*/React.createElement("p", {
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-title only-fine"
+  }, "Trascina qui il file oppure clicca per selezionarlo"), /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-title only-coarse"
+  }, "Tocca per scegliere il file"), /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-hint"
+  }, "CSV esportato dalla banca \xB7 PDF dell'estratto conto (testo selezionabile)")), /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 11,
       color: C.textMuted,
@@ -5013,30 +5381,34 @@ function ImportStatementModal({
       lineHeight: 1.5
     }
   }, "I movimenti riconosciuti verranno mostrati in anteprima: potrai correggere data, descrizione, tipo, categoria e importo prima di confermare. I duplicati (stessa data, importo e descrizione) sono segnalati e pre-deselezionati."), err && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.danger,
-      fontSize: 12,
-      marginTop: 12,
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6
-    }
+    className: "inline-error",
+    role: "alert"
   }, /*#__PURE__*/React.createElement(Ic.alert, {
-    size: 14
-  }), " ", err)), stage === 'loading' && /*#__PURE__*/React.createElement("div", {
+    size: 15
+  }), /*#__PURE__*/React.createElement("span", null, err))), stage === 'loading' && /*#__PURE__*/React.createElement("div", {
+    className: "dropzone busy",
+    role: "status",
+    "aria-live": "polite",
     style: {
-      padding: '32px 8px',
-      textAlign: 'center',
-      color: C.textDim,
-      fontSize: 13
+      marginBottom: 16
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "mono-font",
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-progress"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dropzone-msg"
+  }, loading.msg || 'Analisi in corso…'), /*#__PURE__*/React.createElement("span", {
+    className: `progress-track ${loading.pct === null ? 'indeterminate' : ''}`,
     style: {
-      color: C.gold,
-      marginBottom: 8
+      display: 'block'
     }
-  }, "\u25CF \u25CF \u25CF"), loadingMsg || 'Analisi in corso…'), stage === 'review' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "progress-fill",
+    style: {
+      display: 'block',
+      '--fill': loading.pct === null ? 0.35 : loading.pct,
+      background: C.gold
+    }
+  })))), stage === 'review' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       justifyContent: 'space-between',
@@ -5059,7 +5431,19 @@ function ImportStatementModal({
     style: {
       color: C.rust
     }
-  }, "Uscite ", fmt(selExpense))), /*#__PURE__*/React.createElement("button", {
+  }, "Uscite ", fmt(selExpense))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    className: "btn-ghost phone-only",
+    onClick: toggleAll,
+    style: {
+      padding: '6px 12px'
+    }
+  }, allChecked ? 'Deseleziona tutti' : 'Seleziona tutti'), /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn-ghost",
     onClick: () => {
@@ -5070,7 +5454,8 @@ function ImportStatementModal({
     style: {
       padding: '6px 12px'
     }
-  }, "Cambia file")), /*#__PURE__*/React.createElement("div", {
+  }, "Cambia file"))), /*#__PURE__*/React.createElement("div", {
+    className: "desktop-table",
     style: {
       overflowX: 'auto',
       maxHeight: '52vh',
@@ -5164,24 +5549,80 @@ function ImportStatementModal({
         textAlign: 'right'
       }
     })));
-  })))), err && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.danger,
-      fontSize: 12,
-      marginTop: 12,
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6
-    }
+  })))), /*#__PURE__*/React.createElement("div", {
+    className: "phone-list"
+  }, rows.map(r => {
+    const cats = r.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+    return /*#__PURE__*/React.createElement("div", {
+      key: r._id,
+      className: `imp-card ${r._checked ? '' : 'off'}`
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "imp-card-top"
+    }, /*#__PURE__*/React.createElement("input", {
+      type: "checkbox",
+      className: "tx-row-check",
+      checked: r._checked,
+      onChange: () => setRow(r._id, '_checked', !r._checked),
+      "aria-label": `Importa ${r.description}`
+    }), /*#__PURE__*/React.createElement("input", {
+      type: "date",
+      className: "input-cell",
+      value: r.date,
+      onChange: e => setRow(r._id, 'date', e.target.value),
+      "aria-label": "Data"
+    }), /*#__PURE__*/React.createElement("input", {
+      type: "number",
+      inputMode: "decimal",
+      min: "0.01",
+      step: "0.01",
+      className: "input-cell",
+      value: r.amount,
+      onChange: e => setRow(r._id, 'amount', e.target.value),
+      "aria-label": "Importo in euro",
+      style: {
+        textAlign: 'right'
+      }
+    })), /*#__PURE__*/React.createElement("input", {
+      type: "text",
+      className: "input-cell",
+      value: r.description,
+      onChange: e => setRow(r._id, 'description', e.target.value),
+      "aria-label": "Descrizione"
+    }), /*#__PURE__*/React.createElement("div", {
+      className: "imp-card-selects"
+    }, /*#__PURE__*/React.createElement("select", {
+      className: "input-cell",
+      value: r.type,
+      onChange: e => setRowType(r._id, e.target.value),
+      style: {
+        background: C.card
+      },
+      "aria-label": "Tipo"
+    }, /*#__PURE__*/React.createElement("option", {
+      value: "income"
+    }, "Entrata"), /*#__PURE__*/React.createElement("option", {
+      value: "expense"
+    }, "Uscita")), /*#__PURE__*/React.createElement("select", {
+      className: "input-cell",
+      value: r.category,
+      onChange: e => setRow(r._id, 'category', e.target.value),
+      style: {
+        background: C.card
+      },
+      "aria-label": "Categoria"
+    }, cats.map(c => /*#__PURE__*/React.createElement("option", {
+      key: c,
+      value: c
+    }, c)))), r._dup && /*#__PURE__*/React.createElement("div", {
+      className: "imp-dup"
+    }, "Gi\xE0 presente nel registro: resta escluso finch\xE9 non lo selezioni."));
+  })), err && /*#__PURE__*/React.createElement("div", {
+    className: "inline-error",
+    role: "alert"
   }, /*#__PURE__*/React.createElement(Ic.alert, {
-    size: 14
-  }), " ", err), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'flex-end',
-      gap: 10,
-      marginTop: 14
-    }
+    size: 15
+  }), /*#__PURE__*/React.createElement("span", null, err)), /*#__PURE__*/React.createElement("div", {
+    className: "modal-actions"
   }, /*#__PURE__*/React.createElement("button", {
     type: "button",
     className: "btn-ghost",
@@ -5273,7 +5714,9 @@ function TransactionsTab({
     dir: key === 'date' || key === 'amount' ? 'desc' : 'asc'
   });
   const handleDelete = t => {
-    if (window.confirm(`Eliminare il movimento "${t.description}" del ${itDateLabel(t.date)}?`)) onDelete(t.id);
+    if (!window.confirm(`Eliminare il movimento "${t.description}" del ${itDateLabel(t.date)}?`)) return false;
+    onDelete(t.id);
+    return true;
   };
   const handleSave = payload => {
     if (modal && modal.kind === 'edit') onUpdate(modal.tx.id, payload);else onAdd(payload);
@@ -5281,98 +5724,84 @@ function TransactionsTab({
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "bento"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-12",
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'flex-start',
-      gap: 16,
-      flexWrap: 'wrap'
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h3", {
-    className: "display-font",
-    style: {
-      margin: 0,
-      fontSize: 22,
-      fontWeight: 400
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: C.gold,
-      marginRight: 8
-    }
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Entrate & Uscite")), /*#__PURE__*/React.createElement("p", {
-    style: {
-      margin: '8px 0 0',
-      color: C.textDim,
-      fontSize: 13,
-      maxWidth: 560
-    }
-  }, "Registro di tutti i flussi di denaro in entrata e in uscita: traccia, filtra e analizza ogni movimento.")), /*#__PURE__*/React.createElement("div", {
-    className: "tx-head-actions",
-    style: {
-      display: 'flex',
-      gap: 10,
-      flexWrap: 'wrap'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    className: "btn-ghost",
-    onClick: () => setModal({
-      kind: 'import'
-    }),
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 8
-    }
-  }, /*#__PURE__*/React.createElement(Ic.upload, null), " Importa estratto conto"), /*#__PURE__*/React.createElement("button", {
-    className: "btn-primary",
-    onClick: () => setModal({
-      kind: 'add'
-    })
-  }, /*#__PURE__*/React.createElement(Ic.plus, null), " Aggiungi movimento"))), /*#__PURE__*/React.createElement(SummaryCard, {
-    label: "Entrate totali",
-    accent: "accent-sage",
-    value: fmt(overall.totalIncome),
-    trend: pctChange(cur.income, prev ? prev.income : null),
-    hint: curKey ? `${itMonthLabel(curKey)}: ${fmt(cur.income)}` : 'nessun dato'
-  }), /*#__PURE__*/React.createElement(SummaryCard, {
-    label: "Uscite totali",
-    accent: "accent-rust",
-    value: fmt(overall.totalExpenses),
-    trend: pctChange(cur.expenses, prev ? prev.expenses : null),
-    invertTrend: true,
-    hint: curKey ? `${itMonthLabel(curKey)}: ${fmt(cur.expenses)}` : 'nessun dato'
-  }), /*#__PURE__*/React.createElement(SummaryCard, {
+  }, /*#__PURE__*/React.createElement(PageHero, {
     label: "Saldo netto",
-    value: /*#__PURE__*/React.createElement("span", {
+    value: overall.netBalance,
+    tone: overall.netBalance >= 0 ? C.sage : C.rust,
+    meta: /*#__PURE__*/React.createElement(React.Fragment, null, curKey && /*#__PURE__*/React.createElement("span", null, itMonthLabel(curKey), ": ", /*#__PURE__*/React.createElement("strong", {
       style: {
-        color: overall.netBalance >= 0 ? C.sage : C.rust
+        color: cur.net >= 0 ? C.sage : C.rust
       }
-    }, fmt(overall.netBalance)),
-    trend: pctChange(cur.net, prev ? prev.net : null),
-    hint: `${all.length} movimenti registrati`
-  }), /*#__PURE__*/React.createElement(SummaryCard, {
-    label: "Tasso di risparmio (mese)",
-    value: fmtPct(curRate),
-    trend: prevRate !== null ? curRate - prevRate : null,
-    hint: prevRate !== null ? `${itMonthLabel(prevKey)}: ${fmtPct(prevRate)}` : curKey ? itMonthLabel(curKey) : 'nessun dato'
+    }, cur.net >= 0 ? '+' : '−', fmt(Math.abs(cur.net)))), /*#__PURE__*/React.createElement(TrendTag, {
+      trend: pctChange(cur.net, prev ? prev.net : null)
+    }), /*#__PURE__*/React.createElement("span", null, all.length, " movimenti registrati")),
+    aside: curKey ? /*#__PURE__*/React.createElement(PartBars, {
+      title: `Il mese · ${itMonthLabel(curKey)}`,
+      total: Math.max(cur.income, cur.expenses),
+      parts: [{
+        name: 'Entrate',
+        value: cur.income,
+        color: C.sage,
+        share: ''
+      }, {
+        name: 'Uscite',
+        value: cur.expenses,
+        color: C.rust,
+        share: cur.income > 0 ? `${fmtPct(cur.expenses / cur.income)} delle entrate` : ''
+      }]
+    }) : null,
+    footClass: "desktop-only",
+    foot: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("p", {
+      className: "hero-note"
+    }, "Registro di tutti i flussi di denaro in entrata e in uscita: traccia, filtra e analizza ogni movimento."), /*#__PURE__*/React.createElement("div", {
+      className: "tx-head-actions"
+    }, /*#__PURE__*/React.createElement("button", {
+      className: "btn-ghost",
+      onClick: () => setModal({
+        kind: 'import'
+      }),
+      style: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement(Ic.upload, null), " Importa estratto conto"), /*#__PURE__*/React.createElement("button", {
+      className: "btn-primary",
+      onClick: () => setModal({
+        kind: 'add'
+      })
+    }, /*#__PURE__*/React.createElement(Ic.plus, null), " Aggiungi movimento")))
+  }), /*#__PURE__*/React.createElement(StatStrip, {
+    items: [{
+      label: 'Entrate totali',
+      value: fmt(overall.totalIncome),
+      color: C.sage,
+      hint: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(TrendTag, {
+        trend: pctChange(cur.income, prev ? prev.income : null)
+      }), curKey ? `${itMonthLabel(curKey)}: ${fmt(cur.income)}` : 'nessun dato')
+    }, {
+      label: 'Uscite totali',
+      value: fmt(overall.totalExpenses),
+      color: C.rust,
+      hint: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(TrendTag, {
+        trend: pctChange(cur.expenses, prev ? prev.expenses : null),
+        invert: true
+      }), curKey ? `${itMonthLabel(curKey)}: ${fmt(cur.expenses)}` : 'nessun dato')
+    }, {
+      label: 'Tasso di risparmio (mese)',
+      value: fmtPct(curRate),
+      color: curRate >= 0.2 ? C.sage : curRate >= 0.1 ? C.gold : C.rust,
+      hint: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(TrendTag, {
+        trend: prevRate !== null ? curRate - prevRate : null
+      }), prevRate !== null ? `${itMonthLabel(prevKey)}: ${fmtPct(prevRate)}` : curKey ? itMonthLabel(curKey) : 'nessun dato')
+    }]
   }), /*#__PURE__*/React.createElement("div", {
     className: "bento-card span-12 tx-filter-card"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Filtri"))), /*#__PURE__*/React.createElement(TransactionFilters, {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Filtri"))), /*#__PURE__*/React.createElement(TransactionFilters, {
     filters: filters,
     onChange: setFilters,
     onReset: () => setFilters(emptyFilters)
@@ -5381,12 +5810,14 @@ function TransactionsTab({
   }, /*#__PURE__*/React.createElement("button", {
     className: "month-chip",
     onClick: () => setFilterSheet(true),
-    "aria-haspopup": "dialog",
-    style: {
-      width: '100%',
-      justifyContent: 'center'
-    }
-  }, /*#__PURE__*/React.createElement(Ic.search, null), " Filtri", activeFilterCount ? ` · ${activeFilterCount}` : '')), filterSheet && /*#__PURE__*/React.createElement(Sheet, {
+    "aria-haspopup": "dialog"
+  }, /*#__PURE__*/React.createElement(Ic.search, null), " Filtri", activeFilterCount ? ` · ${activeFilterCount}` : ''), /*#__PURE__*/React.createElement("button", {
+    className: "month-chip",
+    onClick: () => setModal({
+      kind: 'import'
+    }),
+    "aria-haspopup": "dialog"
+  }, /*#__PURE__*/React.createElement(Ic.upload, null), " Importa")), filterSheet && /*#__PURE__*/React.createElement(Sheet, {
     title: "Filtri",
     onClose: () => setFilterSheet(false)
   }, /*#__PURE__*/React.createElement("div", {
@@ -5418,11 +5849,7 @@ function TransactionsTab({
     }
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Movimenti")), /*#__PURE__*/React.createElement("span", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Movimenti")), /*#__PURE__*/React.createElement("span", {
     className: "mono-font",
     style: {
       fontSize: 12,
@@ -5475,7 +5902,10 @@ function TransactionsTab({
     key: modal.kind === 'edit' ? modal.tx.id : 'new',
     initial: modal.kind === 'edit' ? modal.tx : null,
     onSave: handleSave,
-    onClose: () => setModal(null)
+    onClose: () => setModal(null),
+    onDelete: modal.kind === 'edit' ? () => {
+      if (handleDelete(modal.tx)) setModal(null);
+    } : undefined
   }), modal && modal.kind === 'import' && /*#__PURE__*/React.createElement(ImportStatementModal, {
     existing: all,
     onImport: list => {
@@ -5766,16 +6196,42 @@ function FinanceDashboard() {
       }
     }));
   }, []);
-  const exportJSON = useCallback(() => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
+
+  /* Sull'app installata su iPhone un download da blob apre un'anteprima senza
+     via d'uscita: il foglio di condivisione invece offre "Salva su File".
+     Altrove resta il download, con il link agganciato alla pagina (Firefox lo
+     ignora se è staccato) e l'URL revocato dopo, non nello stesso istante. */
+  const exportJSON = useCallback(async () => {
+    const name = `budget_${data.profile.month.replace(/\s/g, '_')}.json`;
+    const json = JSON.stringify(data, null, 2);
+    try {
+      const touch = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+      const file = new File([json], name, {
+        type: 'application/json'
+      });
+      if (touch && navigator.canShare && navigator.canShare({
+        files: [file]
+      })) {
+        await navigator.share({
+          files: [file],
+          title: name
+        });
+        showToast('Backup pronto: salvalo in File');
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+    }
+    const url = URL.createObjectURL(new Blob([json], {
       type: 'application/json'
-    });
-    const url = URL.createObjectURL(blob);
+    }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `budget_${data.profile.month.replace(/\s/g, '_')}.json`;
+    a.download = name;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
     showToast('Dati esportati con successo');
   }, [data, showToast]);
   const importJSON = useCallback(e => {
@@ -5952,41 +6408,49 @@ function FinanceDashboard() {
     value: Math.max(0, totals.monthlySaving),
     fill: RETAINED
   }];
-  const ttStyle = {
-    contentStyle: {
-      background: C.bg,
-      border: `1px solid ${C.gold}`,
-      fontFamily: 'var(--font-number)',
-      fontSize: 12,
-      color: C.text,
-      borderRadius: 4
-    },
-    itemStyle: {
-      color: C.textDim
-    },
-    labelStyle: {
-      color: C.gold
-    }
-  };
   const latestHistory = data.history && data.history.length > 0 ? data.history[data.history.length - 1] : null;
   const netTrend = latestHistory ? totals.netWorth - latestHistory.netWorth : 0;
   const netTrendPct = latestHistory && latestHistory.netWorth > 0 ? netTrend / latestHistory.netWorth : 0;
 
-  /* Il patrimonio sale all'ingresso; la sparkline usa lo storico reale più il
-     valore di adesso, così l'ultimo punto è sempre il presente. */
-  const heroNetWorth = useCountUp(totals.netWorth);
+  /* La sparkline usa lo storico reale più il valore di adesso, così l'ultimo
+     punto è sempre il presente. */
   const sparkPoints = useMemo(() => {
     const hist = (data.history || []).map(h => h.netWorth);
     return [...hist, totals.netWorth];
   }, [data.history, totals.netWorth]);
   const savingColor = totals.savingRate >= 0.2 ? C.sage : totals.savingRate >= 0.1 ? C.gold : C.rust;
   const activeTabLabel = (tabs.find(t => t.id === activeTab) || {}).label || 'Quadro';
-  const narrow = useIsNarrow();
-  const chartH = (desktop, mobile) => narrow ? mobile : desktop;
+  const scale = useChartScale();
+  const narrow = scale.narrow;
+  const chartH = scale.h;
+
+  /* Composizione del patrimonio: la liquidità in grigio, le posizioni sulla
+     rampa. Prima i colori andavano per indice e oltre sei voci finivano. */
+  const composition = useMemo(() => {
+    const rows = [{
+      name: 'Liquidita',
+      value: Number(data.liquidity.current) || 0,
+      color: C.textDim
+    }];
+    data.investments.forEach((i, k) => rows.push({
+      name: i.label,
+      value: Number(i.current) || 0,
+      color: OUTFLOW[k % OUTFLOW.length]
+    }));
+    return rows.filter(d => d.value > 0);
+  }, [data.liquidity, data.investments]);
   return /*#__PURE__*/React.createElement("div", {
     className: "app-shell"
   }, /*#__PURE__*/React.createElement(Toast, {
     message: toast
+  }), /*#__PURE__*/React.createElement("input", {
+    ref: fileInputRef,
+    className: "file-input",
+    type: "file",
+    accept: ".json,application/json",
+    onChange: importJSON,
+    tabIndex: -1,
+    "aria-hidden": "true"
   }), /*#__PURE__*/React.createElement(Sidebar, {
     tabs: tabs,
     activeTab: activeTab,
@@ -6018,11 +6482,7 @@ function FinanceDashboard() {
     className: "topbar"
   }, /*#__PURE__*/React.createElement("div", {
     className: "topbar-title"
-  }, /*#__PURE__*/React.createElement("h1", null, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Il tuo"), " Quadro"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("h1", null, activeTab === 'overview' ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", null, "Il tuo"), " Quadro") : activeTabLabel), /*#__PURE__*/React.createElement("div", {
     className: "topbar-meta"
   }, /*#__PURE__*/React.createElement("input", {
     type: "text",
@@ -6090,15 +6550,6 @@ function FinanceDashboard() {
     }
   }, /*#__PURE__*/React.createElement(Ic.more, {
     size: 16
-  })), /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: 'none'
-    }
-  }, /*#__PURE__*/React.createElement("input", {
-    ref: fileInputRef,
-    type: "file",
-    accept: "application/json",
-    onChange: importJSON
   })))), actionSheet && /*#__PURE__*/React.createElement(Sheet, {
     title: "Azioni",
     onClose: () => setActionSheet(false)
@@ -6121,8 +6572,8 @@ function FinanceDashboard() {
   }), /*#__PURE__*/React.createElement("span", null, "Esporta dati (JSON)")), /*#__PURE__*/React.createElement("button", {
     className: "sheet-row",
     onClick: () => {
-      setActionSheet(false);
       fileInputRef.current?.click();
+      setActionSheet(false);
     }
   }, /*#__PURE__*/React.createElement(Ic.upload, {
     size: 18
@@ -6199,151 +6650,74 @@ function FinanceDashboard() {
     onClick: () => setProfileSheet(false)
   }, "Fatto"))), /*#__PURE__*/React.createElement("main", null, activeTab === 'overview' && /*#__PURE__*/React.createElement("div", {
     className: "bento"
-  }, /*#__PURE__*/React.createElement("section", {
-    className: "card-hero reveal"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "hero-grid"
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    className: "hero-label"
-  }, "Patrimonio netto"), /*#__PURE__*/React.createElement("div", {
-    className: "hero-value"
-  }, fmt(heroNetWorth)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 10,
-      flexWrap: 'wrap',
-      marginTop: 16
-    }
-  }, latestHistory ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
-    className: `hero-delta ${netTrend >= 0 ? 'up' : 'down'}`
-  }, netTrend >= 0 ? /*#__PURE__*/React.createElement(Ic.up, null) : /*#__PURE__*/React.createElement(Ic.down, null), fmt(Math.abs(netTrend)), " (", fmtPct(Math.abs(netTrendPct)), ")"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 12,
-      color: C.textMuted
-    }
-  }, "rispetto a ", latestHistory.date)) : /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 12,
-      color: C.textMuted
-    }
-  }, "Liquidita ", fmt(data.liquidity.current), " + Investimenti ", fmt(totals.totalInvestCurrent)))), /*#__PURE__*/React.createElement("div", {
-    className: "hero-aside"
-  }, sparkPoints.length >= 2 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      fontWeight: 600,
-      letterSpacing: '0.2em',
-      textTransform: 'uppercase',
-      color: C.textMuted,
-      marginBottom: 8
-    }
-  }, "Andamento \xB7 ", sparkPoints.length, " rilevazioni"), /*#__PURE__*/React.createElement(Sparkline, {
-    points: sparkPoints,
-    color: C.gold
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      fontWeight: 600,
-      letterSpacing: '0.2em',
-      textTransform: 'uppercase',
-      color: C.textMuted,
-      marginBottom: 12
-    }
-  }, "Da cosa \xE8 fatto"), [{
-    name: 'Liquidita',
-    value: data.liquidity.current,
-    color: C.textDim
-  }, {
-    name: 'Investimenti',
-    value: totals.totalInvestCurrent,
-    color: C.gold
-  }].map(part => /*#__PURE__*/React.createElement("div", {
-    key: part.name,
-    style: {
-      marginBottom: 12
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'baseline',
-      gap: 10,
-      marginBottom: 5
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 12.5,
-      color: C.textDim
-    }
-  }, part.name), /*#__PURE__*/React.createElement("span", {
-    className: "mono-font",
-    style: {
-      fontSize: 12.5,
-      color: C.text
-    }
-  }, fmt(part.value), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: C.textMuted,
-      marginLeft: 8
-    }
-  }, fmtPct(part.value / Math.max(1, totals.netWorth))))), /*#__PURE__*/React.createElement("div", {
-    className: "progress-track",
-    style: {
-      height: 5
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "progress-fill",
-    style: {
-      '--fill': Math.min(100, part.value / Math.max(1, totals.netWorth) * 100) / 100,
-      background: part.color
-    }
-  })))), sparkPoints.length < 2 && !narrow && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11.5,
-      color: C.textMuted,
-      marginTop: 14,
-      lineHeight: 1.5
-    }
-  }, "Salva uno snapshot ogni mese: qui comparir\xE0 l'andamento nel tempo.")))), /*#__PURE__*/React.createElement("div", {
-    className: "hero-foot"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12
-    }
-  }, /*#__PURE__*/React.createElement(SavingArc, {
-    rate: totals.savingRate
-  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      fontWeight: 600,
-      letterSpacing: '0.2em',
-      textTransform: 'uppercase',
-      color: C.textMuted
-    }
-  }, "Tasso di risparmio"), /*#__PURE__*/React.createElement("div", {
-    className: "number-display",
-    style: {
-      fontSize: 21,
-      marginTop: 4,
-      color: savingColor
-    }
-  }, fmtPct(totals.savingRate), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 12,
-      color: C.textMuted,
-      marginLeft: 8
-    }
-  }, fmt(totals.monthlySaving), " / mese")))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: C.textDim,
-      maxWidth: '34ch',
-      lineHeight: 1.5
-    }
-  }, totals.savingRate >= 0.2 ? 'Eccellente: oltre un quinto del netto resta ogni mese.' : totals.savingRate >= 0.1 ? 'In linea, migliorabile: il margine c’è ma è sottile.' : 'Sotto soglia: rivedi le spese variabili o le rate in corso.'))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(PageHero, {
+    label: "Patrimonio netto",
+    value: totals.netWorth,
+    meta: latestHistory ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(HeroDelta, {
+      up: netTrend >= 0
+    }, fmt(Math.abs(netTrend)), " (", fmtPct(Math.abs(netTrendPct)), ")"), /*#__PURE__*/React.createElement("span", null, "rispetto a ", itMonthLabel(latestHistory.date))) : /*#__PURE__*/React.createElement("span", null, "Liquidita ", fmt(data.liquidity.current), " + Investimenti ", fmt(totals.totalInvestCurrent)),
+    aside: /*#__PURE__*/React.createElement(React.Fragment, null, sparkPoints.length >= 2 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      className: "aside-label",
+      style: {
+        marginBottom: 8
+      }
+    }, "Andamento \xB7 ", sparkPoints.length, " rilevazioni"), /*#__PURE__*/React.createElement(Sparkline, {
+      points: sparkPoints,
+      color: C.gold
+    })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(PartBars, {
+      title: "Da cosa \xE8 fatto",
+      total: totals.netWorth,
+      parts: [{
+        name: 'Liquidita',
+        value: data.liquidity.current,
+        color: C.textDim
+      }, {
+        name: 'Investimenti',
+        value: totals.totalInvestCurrent,
+        color: C.gold
+      }]
+    }), sparkPoints.length < 2 && !narrow && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: C.textMuted,
+        marginTop: 14,
+        lineHeight: 1.5
+      }
+    }, "Salva uno snapshot ogni mese: qui comparir\xE0 l'andamento nel tempo."))),
+    foot: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "arc-stat",
+      style: {
+        gap: 12
+      }
+    }, /*#__PURE__*/React.createElement(SavingArc, {
+      rate: totals.savingRate
+    }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+      className: "aside-label",
+      style: {
+        marginBottom: 0
+      }
+    }, "Tasso di risparmio"), /*#__PURE__*/React.createElement("div", {
+      className: "number-display",
+      style: {
+        fontSize: 21,
+        marginTop: 4,
+        color: savingColor
+      }
+    }, fmtPct(totals.savingRate), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        color: C.textMuted,
+        marginLeft: 8
+      }
+    }, fmt(totals.monthlySaving), " / mese")))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: C.textDim,
+        maxWidth: '34ch',
+        lineHeight: 1.5
+      }
+    }, totals.savingRate >= 0.2 ? 'Eccellente: oltre un quinto del netto resta ogni mese.' : totals.savingRate >= 0.1 ? 'In linea, migliorabile: il margine c’è ma è sottile.' : 'Sotto soglia: rivedi le spese variabili o le rate in corso.'))
+  }), /*#__PURE__*/React.createElement("div", {
     className: "stat-strip reveal",
     style: {
       animationDelay: '60ms'
@@ -6359,7 +6733,7 @@ function FinanceDashboard() {
     }
   }, fmt(totals.totalIncome)), /*#__PURE__*/React.createElement("div", {
     className: "stat-hint"
-  }, data.income.length, " ", data.income.length === 1 ? 'fonte' : 'fonti', totals.cedolinoAttivo ? ` · netto da cedolino ${totals.cedolinoAttivo.month}` : ''), /*#__PURE__*/React.createElement("div", {
+  }, data.income.length, " ", data.income.length === 1 ? 'fonte' : 'fonti', totals.cedolinoAttivo ? ` · netto da cedolino ${itMonthLabel(totals.cedolinoAttivo.month)}` : ''), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10
     }
@@ -6443,16 +6817,12 @@ function FinanceDashboard() {
       color: C.textDim
     }
   }, fmtPct(data.liquidity.current / Math.max(1, data.liquidity.targetEmergency)), " \xB7 mancano ", fmt(Math.max(0, data.liquidity.targetEmergency - data.liquidity.current)))))), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-8 row-2"
+    className: "bento-card span-8 row-2 chart-card"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Allocazione flusso mensile")), /*#__PURE__*/React.createElement("span", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Allocazione flusso mensile")), /*#__PURE__*/React.createElement("span", {
     className: "mono-font",
     style: {
       fontSize: 11,
@@ -6460,14 +6830,15 @@ function FinanceDashboard() {
     }
   }, "su ", fmt(totals.totalIncome))), /*#__PURE__*/React.createElement(ResponsiveContainer, {
     width: "100%",
-    height: chartH(300, 240)
+    height: chartH(300, 230)
   }, /*#__PURE__*/React.createElement(BarChart, {
     data: barData,
     layout: "vertical",
     margin: {
-      left: 10,
-      right: 30,
-      top: 10
+      left: 0,
+      right: scale.margin.right + 8,
+      top: 6,
+      bottom: 0
     }
   }, /*#__PURE__*/React.createElement("defs", null, barData.map((d, i) => /*#__PURE__*/React.createElement("linearGradient", {
     key: i,
@@ -6488,19 +6859,17 @@ function FinanceDashboard() {
     strokeDasharray: "2 4",
     stroke: C.border,
     horizontal: false
-  }), /*#__PURE__*/React.createElement(XAxis, {
-    type: "number",
-    stroke: C.textMuted,
-    tickFormatter: v => `${v}€`
-  }), /*#__PURE__*/React.createElement(YAxis, {
+  }), /*#__PURE__*/React.createElement(XAxis, _extends({
+    type: "number"
+  }, scale.axis, {
+    tickFormatter: fmtTick,
+    minTickGap: scale.minTickGap
+  })), /*#__PURE__*/React.createElement(YAxis, _extends({
     type: "category",
-    dataKey: "name",
-    stroke: C.textMuted,
-    width: narrow ? 62 : 80,
-    tick: {
-      fontSize: narrow ? 10 : 11
-    }
-  }), /*#__PURE__*/React.createElement(Tooltip, _extends({}, ttStyle, {
+    dataKey: "name"
+  }, scale.axis, {
+    width: narrow ? 64 : 80
+  })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_BAR, {
     formatter: v => fmt(v)
   })), /*#__PURE__*/React.createElement(Bar, {
     dataKey: "value",
@@ -6509,91 +6878,30 @@ function FinanceDashboard() {
     key: i,
     fill: `url(#barGrad${i})`
   })))))), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-4 row-2"
+    className: "bento-card span-4 row-2 chart-card"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Composizione patrimonio"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      width: '100%',
-      height: 240
-    }
-  }, /*#__PURE__*/React.createElement(ResponsiveContainer, {
-    width: "100%",
-    height: chartH(240, 210)
-  }, /*#__PURE__*/React.createElement(PieChart, null, /*#__PURE__*/React.createElement(Pie, {
-    data: [{
-      name: 'Liquidita',
-      value: data.liquidity.current
-    }, ...data.investments.map(i => ({
-      name: i.label,
-      value: i.current
-    }))].filter(d => d.value > 0),
-    dataKey: "value",
-    cx: "50%",
-    cy: "50%",
-    innerRadius: 55,
-    outerRadius: 90,
-    paddingAngle: 3
-  }, [C.textDim, ...PIE_COLORS].map((c, i) => /*#__PURE__*/React.createElement(Cell, {
-    key: i,
-    fill: c
-  }))), /*#__PURE__*/React.createElement(Tooltip, _extends({}, ttStyle, {
-    formatter: v => fmt(v)
-  })))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      inset: 0,
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      pointerEvents: 'none'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "mono-font",
-    style: {
-      fontSize: 10,
-      color: C.textMuted,
-      letterSpacing: '0.15em'
-    }
-  }, "TOTALE"), /*#__PURE__*/React.createElement("div", {
-    className: "display-font number-display",
-    style: {
-      fontSize: 22,
-      color: C.gold
-    }
-  }, fmt(totals.netWorth)))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: C.textDim,
-      marginTop: 8
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: C.textDim
-    }
-  }, "\u25CF Liquidita ", fmtPct(data.liquidity.current / Math.max(1, totals.netWorth))), '  ', /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: C.gold
-    }
-  }, "\u25CF Investimenti ", fmtPct(totals.totalInvestCurrent / Math.max(1, totals.netWorth))))), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-7 row-2"
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Composizione patrimonio"))), /*#__PURE__*/React.createElement(Donut, {
+    data: composition,
+    colors: composition.map(d => d.color),
+    height: chartH(210, 196),
+    center: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      className: "donut-center-label"
+    }, "Totale"), /*#__PURE__*/React.createElement("span", {
+      className: "donut-center-value"
+    }, fmt(totals.netWorth)))
+  }), /*#__PURE__*/React.createElement(DonutLegend, {
+    data: composition,
+    colors: composition.map(d => d.color)
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "bento-card span-7 row-2 chart-card"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Patrimonio \u2014 prossimi 5 anni")), /*#__PURE__*/React.createElement("span", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Patrimonio \u2014 prossimi 5 anni")), /*#__PURE__*/React.createElement("span", {
     className: "mono-font",
     style: {
       fontSize: 11,
@@ -6603,32 +6911,21 @@ function FinanceDashboard() {
     width: "100%",
     height: chartH(280, 200)
   }, /*#__PURE__*/React.createElement(LineChart, {
-    data: projection.filter((_, i) => i % 3 === 0)
-  }, /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("linearGradient", {
-    id: "netGrad",
-    x1: "0",
-    y1: "0",
-    x2: "0",
-    y2: "1"
-  }, /*#__PURE__*/React.createElement("stop", {
-    offset: "0%",
-    stopColor: C.gold,
-    stopOpacity: "0.3"
-  }), /*#__PURE__*/React.createElement("stop", {
-    offset: "100%",
-    stopColor: C.gold,
-    stopOpacity: "0"
-  }))), /*#__PURE__*/React.createElement(CartesianGrid, {
+    data: projection.filter((_, i) => i % 3 === 0),
+    margin: scale.margin
+  }, /*#__PURE__*/React.createElement(CartesianGrid, {
     strokeDasharray: "2 4",
     stroke: C.border
-  }), /*#__PURE__*/React.createElement(XAxis, {
-    dataKey: "month",
-    stroke: C.textMuted,
-    tickFormatter: v => v % 12 === 0 ? `${v / 12}a` : ''
-  }), /*#__PURE__*/React.createElement(YAxis, {
-    stroke: C.textMuted,
-    tickFormatter: v => `${(v / 1000).toFixed(0)}k`
-  }), /*#__PURE__*/React.createElement(Tooltip, _extends({}, ttStyle, {
+  }), /*#__PURE__*/React.createElement(XAxis, _extends({
+    dataKey: "month"
+  }, scale.axis, {
+    ticks: [0, 12, 24, 36, 48, 60],
+    interval: 0,
+    tickFormatter: v => `${v / 12}a`
+  })), /*#__PURE__*/React.createElement(YAxis, _extends({}, scale.axis, {
+    width: scale.yWidth,
+    tickFormatter: fmtTick
+  })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
     formatter: v => fmt(v),
     labelFormatter: l => `Mese ${l}`
   })), /*#__PURE__*/React.createElement(Line, {
@@ -6669,7 +6966,7 @@ function FinanceDashboard() {
   }, "Diagnosi rapida"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))',
       gap: 18
     }
   }, /*#__PURE__*/React.createElement(DiagnosticItem, {
@@ -6690,7 +6987,31 @@ function FinanceDashboard() {
     text: `${totals.totalIncome > 0 ? fmtPct(totals.totalInvestMonthly / totals.totalIncome) : '0%'} del netto investito. ${totals.totalInvestMonthly / totals.totalIncome >= 0.15 ? 'Ottimo.' : 'Aumentabile dopo fine rate.'}`
   })))), activeTab === 'income' && /*#__PURE__*/React.createElement("div", {
     className: "bento"
-  }, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement(StatStrip, {
+    delay: 0,
+    items: [{
+      label: 'Entrate',
+      value: fmt(totals.totalIncome),
+      color: C.sage,
+      hint: totals.cedolinoAttivo ? `netto da cedolino ${itMonthLabel(totals.cedolinoAttivo.month)}` : `${data.income.length} ${data.income.length === 1 ? 'fonte' : 'fonti'}`
+    }, {
+      label: 'Spese e rate',
+      value: fmt(totals.essentialExpenses),
+      color: C.rust,
+      hint: `fisse ${fmt(totals.totalFixed)} · variabili ${fmt(totals.totalVariable)} · rate ${fmt(totals.totalLoans)}`
+    }, {
+      label: 'Investite',
+      value: fmt(totals.totalInvestMonthly),
+      color: C.gold,
+      hint: 'PAC mensili'
+    }, {
+      label: 'Resta ogni mese',
+      value: fmt(totals.monthlySaving),
+      color: savingColor,
+      hint: `${fmtPct(totals.savingRate)} del netto`,
+      key: true
+    }]
+  }), /*#__PURE__*/React.createElement("div", {
     className: "bento-card span-6 accent-sage"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
@@ -6902,97 +7223,116 @@ function FinanceDashboard() {
     onRemove: removePolyPosition,
     onClose: closePolyPosition,
     onUpdateRate: updateEurUsd
-  }), activeTab === 'projection' && /*#__PURE__*/React.createElement("div", {
-    className: "bento"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-12"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Proiezione patrimoniale a 60 mesi"))), /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: 12,
-      color: C.textDim,
-      marginBottom: 16
-    }
-  }, "Ipotesi rendimenti annui: Equity 7%, Pensione 4% (netto costi), Cripto 12% (alta volatilita), Bond 3%. Le rate decrescono in base ai mesi residui."), /*#__PURE__*/React.createElement(ResponsiveContainer, {
-    width: "100%",
-    height: chartH(400, 260)
-  }, /*#__PURE__*/React.createElement(LineChart, {
-    data: projection
-  }, /*#__PURE__*/React.createElement(CartesianGrid, {
-    strokeDasharray: "2 4",
-    stroke: C.border
-  }), /*#__PURE__*/React.createElement(XAxis, {
-    dataKey: "month",
-    stroke: C.textMuted,
-    tickFormatter: v => v % 12 === 0 ? `${v / 12}a` : ''
-  }), /*#__PURE__*/React.createElement(YAxis, {
-    stroke: C.textMuted,
-    tickFormatter: v => `${(v / 1000).toFixed(0)}k`
-  }), /*#__PURE__*/React.createElement(Tooltip, _extends({}, ttStyle, {
-    formatter: v => fmt(v),
-    labelFormatter: l => `Mese ${l}`
-  })), /*#__PURE__*/React.createElement(Legend, {
-    wrapperStyle: {
-      fontSize: 12
-    }
-  }), /*#__PURE__*/React.createElement(Line, {
-    type: "monotone",
-    dataKey: "liquidity",
-    stroke: C.textDim,
-    strokeWidth: 2,
-    name: "Liquidita",
-    dot: false
-  }), /*#__PURE__*/React.createElement(Line, {
-    type: "monotone",
-    dataKey: "investments",
-    stroke: C.rust,
-    strokeWidth: 2,
-    name: "Investimenti",
-    dot: false
-  }), /*#__PURE__*/React.createElement(Line, {
-    type: "monotone",
-    dataKey: "netWorth",
-    stroke: C.gold,
-    strokeWidth: 3,
-    name: "Patrimonio totale",
-    dot: false
-  })))), [12, 24, 36, 60].map(m => {
-    const point = projection[m];
-    const growth = point && totals.netWorth > 0 ? (point.netWorth - totals.netWorth) / totals.netWorth : 0;
+  }), activeTab === 'projection' && (() => {
+    const growthAt = point => point && totals.netWorth > 0 ? (point.netWorth - totals.netWorth) / totals.netWorth : 0;
+    const signedPct = g => `${g >= 0 ? '+' : '−'}${fmtPct(Math.abs(g))}`;
+    const end = projection[60];
+    const g60 = growthAt(end);
     return /*#__PURE__*/React.createElement("div", {
-      key: m,
-      className: "bento-card span-3"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "card-eyebrow"
-    }, "Tra ", m / 12, " ", m === 12 ? 'anno' : 'anni'), /*#__PURE__*/React.createElement("div", {
-      className: "kpi-value",
+      className: "bento"
+    }, /*#__PURE__*/React.createElement(PageHero, {
+      label: "Patrimonio tra 5 anni",
+      value: end ? end.netWorth : 0,
+      meta: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(HeroDelta, {
+        up: g60 >= 0
+      }, fmtPct(Math.abs(g60))), /*#__PURE__*/React.createElement("span", null, "rispetto a oggi, ", fmt(totals.netWorth))),
+      aside: end ? /*#__PURE__*/React.createElement(PartBars, {
+        title: "Da cosa sar\xE0 fatto",
+        total: Math.max(1, end.netWorth),
+        parts: [{
+          name: 'Liquidita',
+          value: end.liquidity,
+          color: C.textDim
+        }, {
+          name: 'Investimenti',
+          value: end.investments,
+          color: C.gold
+        }]
+      }) : null
+    }), /*#__PURE__*/React.createElement(StatStrip, {
+      items: [12, 24, 36].map(m => {
+        const point = projection[m];
+        const g = growthAt(point);
+        return {
+          label: `Tra ${m / 12} ${m === 12 ? 'anno' : 'anni'}`,
+          value: point ? fmt(point.netWorth) : '—',
+          color: C.gold,
+          hint: point ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+            style: {
+              color: g >= 0 ? C.sage : C.rust
+            }
+          }, signedPct(g)), " \xB7 Liq ", fmt(point.liquidity), " \xB7 Inv ", fmt(point.investments)) : null
+        };
+      })
+    }), /*#__PURE__*/React.createElement("div", {
+      className: "bento-card span-12 chart-card"
+    }, /*#__PURE__*/React.createElement("h3", {
+      className: "card-title"
+    }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+      className: "diamond"
+    }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Proiezione patrimoniale a 60 mesi"))), /*#__PURE__*/React.createElement("p", {
       style: {
-        color: C.gold
-      }
-    }, point ? fmt(point.netWorth) : '—'), /*#__PURE__*/React.createElement("div", {
-      className: "mono-font",
-      style: {
-        fontSize: 11,
-        color: C.sage,
-        marginTop: 8
-      }
-    }, "+", fmtPct(growth)), point && /*#__PURE__*/React.createElement("div", {
-      className: "mono-font",
-      style: {
-        fontSize: 11,
+        fontSize: 12,
         color: C.textDim,
-        marginTop: 8,
-        lineHeight: 1.6
+        marginBottom: 14,
+        lineHeight: 1.5,
+        maxWidth: '75ch'
       }
-    }, "Liq: ", fmt(point.liquidity), /*#__PURE__*/React.createElement("br", null), "Inv: ", fmt(point.investments)));
-  })), activeTab === 'mortgage' && (() => {
+    }, "Ipotesi rendimenti annui: Equity 7%, Pensione 4% (netto costi), Cripto 12% (alta volatilita), Bond 3%. Le rate decrescono in base ai mesi residui."), /*#__PURE__*/React.createElement(ChartLegend, {
+      items: [{
+        label: 'Patrimonio totale',
+        color: C.gold
+      }, {
+        label: 'Investimenti',
+        color: C.rust
+      }, {
+        label: 'Liquidita',
+        color: C.textDim
+      }]
+    }), /*#__PURE__*/React.createElement(ResponsiveContainer, {
+      width: "100%",
+      height: chartH(380, 240)
+    }, /*#__PURE__*/React.createElement(LineChart, {
+      data: projection,
+      margin: scale.margin
+    }, /*#__PURE__*/React.createElement(CartesianGrid, {
+      strokeDasharray: "2 4",
+      stroke: C.border
+    }), /*#__PURE__*/React.createElement(XAxis, _extends({
+      dataKey: "month"
+    }, scale.axis, {
+      ticks: [0, 12, 24, 36, 48, 60],
+      interval: 0,
+      tickFormatter: v => `${v / 12}a`
+    })), /*#__PURE__*/React.createElement(YAxis, _extends({}, scale.axis, {
+      width: scale.yWidth,
+      tickFormatter: fmtTick
+    })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
+      formatter: v => fmt(v),
+      labelFormatter: l => `Mese ${l}`
+    })), /*#__PURE__*/React.createElement(Line, {
+      type: "monotone",
+      dataKey: "liquidity",
+      stroke: C.textDim,
+      strokeWidth: 2,
+      name: "Liquidita",
+      dot: false
+    }), /*#__PURE__*/React.createElement(Line, {
+      type: "monotone",
+      dataKey: "investments",
+      stroke: C.rust,
+      strokeWidth: 2,
+      name: "Investimenti",
+      dot: false
+    }), /*#__PURE__*/React.createElement(Line, {
+      type: "monotone",
+      dataKey: "netWorth",
+      stroke: C.gold,
+      strokeWidth: 3,
+      name: "Patrimonio totale",
+      dot: false
+    })))));
+  })(), activeTab === 'mortgage' && (() => {
     const m = data.mortgage || {};
     const payA = monthlyPayment(m.amount, m.rate, m.years);
     const schedA = amortizationSchedule(m.amount, m.rate, m.years);
@@ -7072,20 +7412,89 @@ function FinanceDashboard() {
     }, suffix)));
     return /*#__PURE__*/React.createElement("div", {
       className: "bento"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "bento-card span-7"
+    }, /*#__PURE__*/React.createElement(PageHero, {
+      label: "Rata mensile \xB7 incl. assicurazione",
+      value: rataTot,
+      format: fmtEUR2,
+      tone: susColor,
+      meta: /*#__PURE__*/React.createElement("span", null, nA, " rate \xB7 ", Number(m.years) || 0, " anni \xB7 TAN ", fmtPct2((Number(m.rate) || 0) / 100), " \xB7 importo ", fmt(m.amount)),
+      aside: /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+        className: "aside-label"
+      }, "Incidenza sul reddito netto"), /*#__PURE__*/React.createElement("div", {
+        className: "stat-value",
+        style: {
+          color: susColor
+        }
+      }, fmtPct(incidenza)), /*#__PURE__*/React.createElement("div", {
+        className: "progress-track",
+        style: {
+          height: 8,
+          marginTop: 12
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "progress-fill",
+        style: {
+          '--fill': Math.min(1, incidenza),
+          background: susColor
+        }
+      }), /*#__PURE__*/React.createElement("span", {
+        className: "target-tick",
+        style: {
+          left: '30%'
+        }
+      }), /*#__PURE__*/React.createElement("span", {
+        className: "target-tick",
+        style: {
+          left: '35%'
+        }
+      })), /*#__PURE__*/React.createElement("div", {
+        className: "stat-hint",
+        style: {
+          marginTop: 6
+        }
+      }, "soglia consigliata 30\u201335%"), /*#__PURE__*/React.createElement("dl", {
+        className: "hero-facts"
+      }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("dt", null, "Reddito netto mensile"), /*#__PURE__*/React.createElement("dd", null, fmt(totals.totalIncome))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("dt", null, "Risparmio mensile attuale"), /*#__PURE__*/React.createElement("dd", null, fmt(totals.monthlySaving))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("dt", null, "Risparmio residuo dopo la rata"), /*#__PURE__*/React.createElement("dd", {
+        style: {
+          color: risparmioResiduo < 0 ? C.danger : C.sage
+        }
+      }, fmt(risparmioResiduo)))), incidenza > 0.35 && /*#__PURE__*/React.createElement("div", {
+        className: "inline-error",
+        role: "note"
+      }, /*#__PURE__*/React.createElement(Ic.alert, {
+        size: 15
+      }), /*#__PURE__*/React.createElement("span", null, "La rata supera il 35% del reddito netto: molte banche non concedono il finanziamento a queste condizioni.")))
+    }), /*#__PURE__*/React.createElement(StatStrip, {
+      items: [{
+        label: 'Rata mensile (mutuo)',
+        value: fmtEUR2(payA),
+        color: C.gold,
+        hint: `senza assicurazione · ${nA} rate`
+      }, {
+        label: 'Totale interessi',
+        value: fmt(totIntA),
+        color: C.rust,
+        hint: `${m.amount > 0 ? fmtPct(totIntA / m.amount) : '—'} sul capitale`
+      }, {
+        label: 'Costo totale',
+        value: fmt(costTotA),
+        hint: 'capitale + interessi + spese'
+      }, {
+        label: 'TAEG indicativo',
+        value: fmtPct2(taegA),
+        color: C.gold,
+        hint: `TAN ${fmtPct2((Number(m.rate) || 0) / 100)}`
+      }]
+    }), /*#__PURE__*/React.createElement("div", {
+      className: "bento-card span-12"
     }, /*#__PURE__*/React.createElement("h3", {
       className: "card-title"
     }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
       className: "diamond"
-    }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontStyle: 'italic'
-      }
-    }, "Parametri mutuo"))), /*#__PURE__*/React.createElement("div", {
+    }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Parametri mutuo"))), /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))',
         gap: 16,
         marginTop: 4
       }
@@ -7103,7 +7512,7 @@ function FinanceDashboard() {
     }, "Scenario di confronto (B)"), /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))',
         gap: 16
       }
     }, mInput('TAN scenario B', 'rateB', '0.05', '%'), mInput('Durata scenario B', 'yearsB', '1', 'anni'))), /*#__PURE__*/React.createElement("p", {
@@ -7113,190 +7522,40 @@ function FinanceDashboard() {
         marginTop: 16
       }
     }, "Calcoli indicativi a tasso fisso costante (ammortamento alla francese, rata costante). Il TAEG reale dipende da spese e condizioni della banca.")), /*#__PURE__*/React.createElement("div", {
-      className: "bento-card span-5"
+      className: "bento-card span-12 chart-card"
     }, /*#__PURE__*/React.createElement("h3", {
       className: "card-title"
     }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
       className: "diamond"
-    }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontStyle: 'italic'
-      }
-    }, "Sostenibilit\xE0 della rata"))), /*#__PURE__*/React.createElement("div", {
-      className: "card-eyebrow"
-    }, "Rata mensile (incl. assicurazione)"), /*#__PURE__*/React.createElement("div", {
-      className: "kpi-value",
-      style: {
-        color: susColor
-      }
-    }, fmtEUR2(rataTot)), /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 16
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "progress-track",
-      style: {
-        height: 8
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "progress-fill",
-      style: {
-        '--fill': Math.min(100, incidenza * 100) / 100,
-        background: susColor
-      }
-    })), /*#__PURE__*/React.createElement("div", {
-      style: {
-        display: 'flex',
-        justifyContent: 'space-between',
-        marginTop: 8
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      className: "mono-font",
-      style: {
-        fontSize: 11,
-        color: C.textDim
-      }
-    }, "Incidenza sul reddito netto: ", fmtPct(incidenza)), /*#__PURE__*/React.createElement("span", {
-      className: "mono-font",
-      style: {
-        fontSize: 11,
-        color: C.textMuted
-      }
-    }, "soglia consigliata 30\u201335%"))), /*#__PURE__*/React.createElement("div", {
-      className: "mono-font",
-      style: {
-        fontSize: 12,
-        color: C.textDim,
-        marginTop: 18,
-        lineHeight: 1.9
-      }
-    }, "Reddito netto mensile: ", /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: C.text
-      }
-    }, fmt(totals.totalIncome)), /*#__PURE__*/React.createElement("br", null), "Risparmio mensile attuale: ", /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: C.text
-      }
-    }, fmt(totals.monthlySaving)), /*#__PURE__*/React.createElement("br", null), "Risparmio residuo dopo la rata: ", /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: risparmioResiduo < 0 ? C.danger : C.sage,
-        fontWeight: 600
-      }
-    }, fmt(risparmioResiduo))), incidenza > 0.35 && /*#__PURE__*/React.createElement("p", {
-      style: {
-        fontSize: 12,
-        color: C.danger,
-        marginTop: 12,
-        display: 'flex',
-        gap: 8,
-        alignItems: 'flex-start',
-        lineHeight: 1.5
-      }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: {
-        flexShrink: 0,
-        marginTop: 1
-      }
-    }, /*#__PURE__*/React.createElement(Ic.alert, {
-      size: 15
-    })), /*#__PURE__*/React.createElement("span", null, "La rata supera il 35% del reddito netto: molte banche non concedono il finanziamento a queste condizioni."))), /*#__PURE__*/React.createElement("div", {
-      className: "bento-card span-3"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "card-eyebrow"
-    }, "Rata mensile (mutuo)"), /*#__PURE__*/React.createElement("div", {
-      className: "kpi-value",
-      style: {
+    }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Capitale residuo e interessi cumulati"))), /*#__PURE__*/React.createElement(ChartLegend, {
+      items: [{
+        label: 'Capitale residuo',
         color: C.gold
-      }
-    }, fmtEUR2(payA)), /*#__PURE__*/React.createElement("div", {
-      className: "mono-font",
-      style: {
-        fontSize: 11,
-        color: C.textDim,
-        marginTop: 8
-      }
-    }, nA, " rate \xB7 ", Number(m.years) || 0, " anni")), /*#__PURE__*/React.createElement("div", {
-      className: "bento-card span-3 accent-rust"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "card-eyebrow"
-    }, "Totale interessi"), /*#__PURE__*/React.createElement("div", {
-      className: "kpi-value",
-      style: {
+      }, {
+        label: 'Interessi cumulati',
         color: C.rust
-      }
-    }, fmt(totIntA)), /*#__PURE__*/React.createElement("div", {
-      className: "mono-font",
-      style: {
-        fontSize: 11,
-        color: C.textDim,
-        marginTop: 8
-      }
-    }, m.amount > 0 ? fmtPct(totIntA / m.amount) : '—', " sul capitale")), /*#__PURE__*/React.createElement("div", {
-      className: "bento-card span-3"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "card-eyebrow"
-    }, "Costo totale"), /*#__PURE__*/React.createElement("div", {
-      className: "kpi-value",
-      style: {
-        color: C.text
-      }
-    }, fmt(costTotA)), /*#__PURE__*/React.createElement("div", {
-      className: "mono-font",
-      style: {
-        fontSize: 11,
-        color: C.textDim,
-        marginTop: 8
-      }
-    }, "capitale + interessi + spese")), /*#__PURE__*/React.createElement("div", {
-      className: "bento-card span-3"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "card-eyebrow"
-    }, "TAEG indicativo"), /*#__PURE__*/React.createElement("div", {
-      className: "kpi-value",
-      style: {
-        color: C.gold
-      }
-    }, fmtPct2(taegA)), /*#__PURE__*/React.createElement("div", {
-      className: "mono-font",
-      style: {
-        fontSize: 11,
-        color: C.textDim,
-        marginTop: 8
-      }
-    }, "TAN ", fmtPct2((Number(m.rate) || 0) / 100))), /*#__PURE__*/React.createElement("div", {
-      className: "bento-card span-12"
-    }, /*#__PURE__*/React.createElement("h3", {
-      className: "card-title"
-    }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-      className: "diamond"
-    }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontStyle: 'italic'
-      }
-    }, "Capitale residuo e interessi cumulati"))), /*#__PURE__*/React.createElement(ResponsiveContainer, {
+      }]
+    }), /*#__PURE__*/React.createElement(ResponsiveContainer, {
       width: "100%",
-      height: 340
+      height: chartH(340, 230)
     }, /*#__PURE__*/React.createElement(LineChart, {
-      data: chartData
+      data: chartData,
+      margin: scale.margin
     }, /*#__PURE__*/React.createElement(CartesianGrid, {
       strokeDasharray: "2 4",
       stroke: C.border
-    }), /*#__PURE__*/React.createElement(XAxis, {
-      dataKey: "year",
-      stroke: C.textMuted,
+    }), /*#__PURE__*/React.createElement(XAxis, _extends({
+      dataKey: "year"
+    }, scale.axis, {
+      minTickGap: scale.minTickGap,
       tickFormatter: v => `${v}a`
-    }), /*#__PURE__*/React.createElement(YAxis, {
-      stroke: C.textMuted,
-      tickFormatter: v => `${(v / 1000).toFixed(0)}k`
-    }), /*#__PURE__*/React.createElement(Tooltip, _extends({}, ttStyle, {
+    })), /*#__PURE__*/React.createElement(YAxis, _extends({}, scale.axis, {
+      width: scale.yWidth,
+      tickFormatter: fmtTick
+    })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
       formatter: v => fmt(v),
       labelFormatter: l => `Anno ${l}`
-    })), /*#__PURE__*/React.createElement(Legend, {
-      wrapperStyle: {
-        fontSize: 12
-      }
-    }), /*#__PURE__*/React.createElement(Line, {
+    })), /*#__PURE__*/React.createElement(Line, {
       type: "monotone",
       dataKey: "residuo",
       stroke: C.gold,
@@ -7316,11 +7575,8 @@ function FinanceDashboard() {
       className: "card-title"
     }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
       className: "diamond"
-    }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontStyle: 'italic'
-      }
-    }, "Confronto scenari"))), /*#__PURE__*/React.createElement("div", {
+    }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Confronto scenari"))), /*#__PURE__*/React.createElement("div", {
+      className: "desktop-table",
       style: {
         overflowX: 'auto'
       }
@@ -7439,7 +7695,47 @@ function FinanceDashboard() {
         padding: '10px',
         color: costTotB < costTotA ? C.sage : C.text
       }
-    }, fmt(costTotB)))))), /*#__PURE__*/React.createElement("p", {
+    }, fmt(costTotB)))))), /*#__PURE__*/React.createElement("div", {
+      className: "phone-list scenario-pair"
+    }, [{
+      name: 'A (attuale)',
+      color: C.gold,
+      rate: m.rate,
+      years: m.years,
+      pay: payA,
+      interest: totIntA,
+      cost: costTotA,
+      bestInt: totIntA <= totIntB,
+      bestCost: costTotA <= costTotB
+    }, {
+      name: 'B (confronto)',
+      color: C.purple,
+      rate: m.rateB,
+      years: m.yearsB,
+      pay: payB,
+      interest: totIntB,
+      cost: costTotB,
+      bestInt: totIntB < totIntA,
+      bestCost: costTotB < costTotA
+    }].map(sc => /*#__PURE__*/React.createElement("div", {
+      key: sc.name,
+      className: "m-card"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "m-row-title",
+      style: {
+        color: sc.color
+      }
+    }, sc.name), /*#__PURE__*/React.createElement("dl", {
+      className: "hero-facts stacked"
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("dt", null, "TAN \xB7 durata"), /*#__PURE__*/React.createElement("dd", null, fmtPct2((Number(sc.rate) || 0) / 100), " \xB7 ", Number(sc.years) || 0, " anni")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("dt", null, "Rata"), /*#__PURE__*/React.createElement("dd", null, fmtEUR2(sc.pay))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("dt", null, "Totale interessi"), /*#__PURE__*/React.createElement("dd", {
+      style: {
+        color: sc.bestInt ? C.sage : C.text
+      }
+    }, fmt(sc.interest))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("dt", null, "Costo totale"), /*#__PURE__*/React.createElement("dd", {
+      style: {
+        color: sc.bestCost ? C.sage : C.text
+      }
+    }, fmt(sc.cost))))))), /*#__PURE__*/React.createElement("p", {
       style: {
         fontSize: 11,
         color: C.textDim,
@@ -7520,146 +7816,216 @@ function FinanceDashboard() {
         color: C.text
       }
     }, fmt(r.bal)))))))));
-  })(), activeTab === 'history' && /*#__PURE__*/React.createElement("div", {
-    className: "bento"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-12"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, "Storico mensile"))), /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: 12,
-      color: C.textDim,
-      marginBottom: 16
-    }
-  }, "Usa il pulsante \"Snapshot\" in alto per salvare lo stato del mese corrente. Ogni mese si sovrascrive se gia presente."), (data.history || []).length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: 40,
-      textAlign: 'center',
-      color: C.textMuted
-    }
-  }, /*#__PURE__*/React.createElement(Ic.trend, {
-    size: 32
-  }), /*#__PURE__*/React.createElement("p", {
-    style: {
-      marginTop: 12
-    }
-  }, "Nessuno snapshot salvato. Clicca \"Snapshot\" per iniziare.")) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(ResponsiveContainer, {
-    width: "100%",
-    height: chartH(300, 230)
-  }, /*#__PURE__*/React.createElement(LineChart, {
-    data: data.history
-  }, /*#__PURE__*/React.createElement(CartesianGrid, {
-    strokeDasharray: "2 4",
-    stroke: C.border
-  }), /*#__PURE__*/React.createElement(XAxis, {
-    dataKey: "date",
-    stroke: C.textMuted
-  }), /*#__PURE__*/React.createElement(YAxis, {
-    stroke: C.textMuted,
-    tickFormatter: v => `${(v / 1000).toFixed(0)}k`
-  }), /*#__PURE__*/React.createElement(Tooltip, _extends({}, ttStyle, {
-    formatter: v => fmt(v)
-  })), /*#__PURE__*/React.createElement(Legend, {
-    wrapperStyle: {
-      fontSize: 12
-    }
-  }), /*#__PURE__*/React.createElement(Line, {
-    type: "monotone",
-    dataKey: "netWorth",
-    stroke: C.gold,
-    strokeWidth: 2,
-    name: "Patrimonio",
-    dot: {
-      r: 4
-    }
-  }), /*#__PURE__*/React.createElement(Line, {
-    type: "monotone",
-    dataKey: "liquidity",
-    stroke: C.textDim,
-    strokeWidth: 1.5,
-    name: "Liquidita",
-    dot: {
-      r: 3
-    }
-  }), /*#__PURE__*/React.createElement(Line, {
-    type: "monotone",
-    dataKey: "investments",
-    stroke: C.sage,
-    strokeWidth: 1.5,
-    name: "Investimenti",
-    dot: {
-      r: 3
-    }
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      overflowX: 'auto',
-      marginTop: 20
-    }
-  }, /*#__PURE__*/React.createElement("table", {
-    style: {
-      width: '100%',
-      borderCollapse: 'collapse',
-      fontSize: 13
-    }
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
-    style: {
-      borderBottom: `1px solid ${C.border}`
-    }
-  }, ['Mese', 'Patrimonio', 'Liquidita', 'Investimenti', 'Entrate', 'Risparmio'].map(h => /*#__PURE__*/React.createElement("th", {
-    key: h,
-    style: {
-      textAlign: 'left',
-      padding: '10px 8px',
-      fontSize: 10,
-      textTransform: 'uppercase',
-      letterSpacing: '0.15em',
-      color: C.textMuted
-    }
-  }, h)))), /*#__PURE__*/React.createElement("tbody", null, data.history.map(h => /*#__PURE__*/React.createElement("tr", {
-    key: h.date,
-    style: {
-      borderBottom: `1px solid ${C.border}`
-    }
-  }, /*#__PURE__*/React.createElement("td", {
-    className: "mono-font",
-    style: {
-      padding: '10px 8px'
-    }
-  }, h.date), /*#__PURE__*/React.createElement("td", {
-    className: "mono-font",
-    style: {
-      padding: '10px 8px',
-      color: C.gold
-    }
-  }, fmt(h.netWorth)), /*#__PURE__*/React.createElement("td", {
-    className: "mono-font",
-    style: {
-      padding: '10px 8px'
-    }
-  }, fmt(h.liquidity)), /*#__PURE__*/React.createElement("td", {
-    className: "mono-font",
-    style: {
-      padding: '10px 8px'
-    }
-  }, fmt(h.investments)), /*#__PURE__*/React.createElement("td", {
-    className: "mono-font",
-    style: {
-      padding: '10px 8px'
-    }
-  }, fmt(h.income)), /*#__PURE__*/React.createElement("td", {
-    className: "mono-font",
-    style: {
-      padding: '10px 8px',
-      color: h.saving >= 0 ? C.sage : C.danger
-    }
-  }, fmt(h.saving)))))))))), activeTab === 'cedolini' && /*#__PURE__*/React.createElement(CedoliniTab, {
+  })(), activeTab === 'history' && (() => {
+    const hist = data.history || [];
+    const firstH = hist[0];
+    const lastH = hist[hist.length - 1];
+    const change = lastH && firstH ? lastH.netWorth - firstH.netWorth : 0;
+    const changePct = firstH && firstH.netWorth > 0 ? change / firstH.netWorth : 0;
+    return /*#__PURE__*/React.createElement("div", {
+      className: "bento"
+    }, lastH && /*#__PURE__*/React.createElement(PageHero, {
+      label: `Ultimo snapshot · ${itMonthLabel(lastH.date)}`,
+      value: lastH.netWorth,
+      meta: hist.length > 1 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(HeroDelta, {
+        up: change >= 0
+      }, fmt(Math.abs(change)), " (", fmtPct(Math.abs(changePct)), ")"), /*#__PURE__*/React.createElement("span", null, "dal primo snapshot, ", itMonthLabel(firstH.date))) : /*#__PURE__*/React.createElement("span", null, "Il primo della serie: salvane uno ogni mese per vedere l'andamento."),
+      aside: hist.length > 1 ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+        className: "aside-label",
+        style: {
+          marginBottom: 8
+        }
+      }, "Andamento \xB7 ", hist.length, " snapshot"), /*#__PURE__*/React.createElement(Sparkline, {
+        points: hist.map(h => h.netWorth),
+        color: C.gold
+      })) : null,
+      foot: /*#__PURE__*/React.createElement("button", {
+        className: "btn-ghost",
+        onClick: saveSnapshot,
+        style: {
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8
+        }
+      }, /*#__PURE__*/React.createElement(Ic.check, null), " Salva lo snapshot di questo mese")
+    }), /*#__PURE__*/React.createElement("div", {
+      className: "bento-card span-12 chart-card"
+    }, /*#__PURE__*/React.createElement("h3", {
+      className: "card-title"
+    }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+      className: "diamond"
+    }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Storico mensile"))), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12,
+        color: C.textDim,
+        marginBottom: 16,
+        lineHeight: 1.5
+      }
+    }, "Uno snapshot fissa patrimonio, liquidit\xE0, investimenti ed entrate del mese. Se il mese \xE8 gi\xE0 salvato, viene sovrascritto."), hist.length === 0 ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '32px 12px',
+        textAlign: 'center',
+        color: C.textMuted
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: C.gold
+      }
+    }, /*#__PURE__*/React.createElement(Ic.trend, {
+      size: 32
+    })), /*#__PURE__*/React.createElement("p", {
+      style: {
+        margin: '12px 0 18px'
+      }
+    }, "Nessuno snapshot salvato."), /*#__PURE__*/React.createElement("button", {
+      className: "btn-primary",
+      onClick: saveSnapshot
+    }, /*#__PURE__*/React.createElement(Ic.check, null), " Salva il primo snapshot")) : /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(ChartLegend, {
+      items: [{
+        label: 'Patrimonio',
+        color: C.gold
+      }, {
+        label: 'Liquidita',
+        color: C.textDim
+      }, {
+        label: 'Investimenti',
+        color: C.sage
+      }]
+    }), /*#__PURE__*/React.createElement(ResponsiveContainer, {
+      width: "100%",
+      height: chartH(300, 220)
+    }, /*#__PURE__*/React.createElement(LineChart, {
+      data: hist,
+      margin: scale.margin
+    }, /*#__PURE__*/React.createElement(CartesianGrid, {
+      strokeDasharray: "2 4",
+      stroke: C.border
+    }), /*#__PURE__*/React.createElement(XAxis, _extends({
+      dataKey: "date"
+    }, scale.axis, {
+      minTickGap: scale.minTickGap
+    })), /*#__PURE__*/React.createElement(YAxis, _extends({}, scale.axis, {
+      width: scale.yWidth,
+      tickFormatter: fmtTick
+    })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
+      formatter: v => fmt(v)
+    })), /*#__PURE__*/React.createElement(Line, {
+      type: "monotone",
+      dataKey: "netWorth",
+      stroke: C.gold,
+      strokeWidth: 2,
+      name: "Patrimonio",
+      dot: {
+        r: 4
+      }
+    }), /*#__PURE__*/React.createElement(Line, {
+      type: "monotone",
+      dataKey: "liquidity",
+      stroke: C.textDim,
+      strokeWidth: 1.5,
+      name: "Liquidita",
+      dot: {
+        r: 3
+      }
+    }), /*#__PURE__*/React.createElement(Line, {
+      type: "monotone",
+      dataKey: "investments",
+      stroke: C.sage,
+      strokeWidth: 1.5,
+      name: "Investimenti",
+      dot: {
+        r: 3
+      }
+    }))), /*#__PURE__*/React.createElement("div", {
+      className: "desktop-table",
+      style: {
+        overflowX: 'auto',
+        marginTop: 20
+      }
+    }, /*#__PURE__*/React.createElement("table", {
+      style: {
+        width: '100%',
+        borderCollapse: 'collapse',
+        fontSize: 13
+      }
+    }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
+      style: {
+        borderBottom: `1px solid ${C.border}`
+      }
+    }, ['Mese', 'Patrimonio', 'Liquidita', 'Investimenti', 'Entrate', 'Risparmio'].map(h => /*#__PURE__*/React.createElement("th", {
+      key: h,
+      style: {
+        textAlign: 'left',
+        padding: '10px 8px',
+        fontSize: 10,
+        textTransform: 'uppercase',
+        letterSpacing: '0.15em',
+        color: C.textMuted
+      }
+    }, h)))), /*#__PURE__*/React.createElement("tbody", null, hist.map(h => /*#__PURE__*/React.createElement("tr", {
+      key: h.date,
+      style: {
+        borderBottom: `1px solid ${C.border}`
+      }
+    }, /*#__PURE__*/React.createElement("td", {
+      className: "mono-font",
+      style: {
+        padding: '10px 8px'
+      }
+    }, h.date), /*#__PURE__*/React.createElement("td", {
+      className: "mono-font",
+      style: {
+        padding: '10px 8px',
+        color: C.gold
+      }
+    }, fmt(h.netWorth)), /*#__PURE__*/React.createElement("td", {
+      className: "mono-font",
+      style: {
+        padding: '10px 8px'
+      }
+    }, fmt(h.liquidity)), /*#__PURE__*/React.createElement("td", {
+      className: "mono-font",
+      style: {
+        padding: '10px 8px'
+      }
+    }, fmt(h.investments)), /*#__PURE__*/React.createElement("td", {
+      className: "mono-font",
+      style: {
+        padding: '10px 8px'
+      }
+    }, fmt(h.income)), /*#__PURE__*/React.createElement("td", {
+      className: "mono-font",
+      style: {
+        padding: '10px 8px',
+        color: h.saving >= 0 ? C.sage : C.danger
+      }
+    }, fmt(h.saving))))))), /*#__PURE__*/React.createElement("div", {
+      className: "phone-list",
+      style: {
+        marginTop: 16
+      }
+    }, [...hist].reverse().map(h => /*#__PURE__*/React.createElement("div", {
+      key: h.date,
+      className: "m-row"
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "m-row-title"
+    }, itMonthLabel(h.date)), /*#__PURE__*/React.createElement("div", {
+      className: "m-row-sub"
+    }, "Liq ", fmt(h.liquidity), " \xB7 Inv ", fmt(h.investments), " \xB7 risparmio ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: h.saving >= 0 ? C.sage : C.danger
+      }
+    }, fmt(h.saving)))), /*#__PURE__*/React.createElement("span", {
+      className: "m-row-value",
+      style: {
+        color: C.gold
+      }
+    }, fmt(h.netWorth))))))));
+  })(), activeTab === 'cedolini' && /*#__PURE__*/React.createElement(CedoliniTab, {
     cedolini: data.cedolini || [],
     onAdd: addCedolino,
     onRemove: removeCedolino,

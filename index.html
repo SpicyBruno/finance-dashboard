@@ -626,7 +626,7 @@
     .stat-strip {
       grid-column: span 12;
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
       gap: 1px;
       border: 1px solid var(--border);
       border-radius: var(--radius-card);
@@ -859,10 +859,32 @@
 
     /* Progress bar */
     .progress-track {
+      position: relative;
       height: 8px;
       background: rgba(94, 75, 52, 0.1);
       border-radius: 4px;
       overflow: hidden;
+    }
+
+    /* Tacca sul valore obiettivo (target di allocazione, soglie della rata) */
+    .target-tick {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      margin-left: -1px;
+      background: var(--text);
+      opacity: 0.75;
+    }
+
+    /* Avanzamento senza percentuale nota: una barra che scorre */
+    .progress-track.indeterminate .progress-fill {
+      animation: indeterminate 1.3s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+    }
+
+    @keyframes indeterminate {
+      from { transform: translateX(-35%) scaleX(0.35); }
+      to { transform: translateX(100%) scaleX(0.35); }
     }
 
     .progress-fill {
@@ -877,6 +899,11 @@
     @media (prefers-reduced-motion: reduce) {
       .progress-fill {
         transition: none;
+      }
+
+      .progress-track.indeterminate .progress-fill {
+        animation: none;
+        transform: scaleX(0.35);
       }
     }
 
@@ -1027,7 +1054,7 @@
        L'importo comanda: prima era più piccolo dei tre badge accanto a lui. */
     .tx-row {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-columns: auto minmax(0, 1fr);
       gap: 12px;
       align-items: start;
       padding: 12px 14px;
@@ -1050,11 +1077,49 @@
       flex-shrink: 0;
     }
 
+    /* Tutta la riga è il bersaglio per modificare: descrizione, badge e
+       importo stanno dentro un solo pulsante */
+    .tx-row-open {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      width: 100%;
+      min-height: 0;
+      padding: 0;
+      background: none;
+      border: 0;
+      border-radius: 6px;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      transition: opacity 0.15s;
+    }
+
+    .tx-row-open:active {
+      opacity: 0.7;
+    }
+
+    /* La riga dei metadati passa sotto anche all'importo e prende tutta la
+       larghezza: accanto all'importo i badge restavano troncati */
+    .tx-row-open {
+      grid-template-areas: "desc amount" "sub sub";
+      row-gap: 7px;
+    }
+    .tx-row-open .tx-row-main { display: contents; }
+    .tx-row-open .tx-row-desc { grid-area: desc; }
+    .tx-row-open .tx-row-sub { grid-area: sub; margin-top: 0; }
+    .tx-row-open .tx-row-right { grid-area: amount; }
+
     .tx-row-main {
+      display: block;
       min-width: 0;
     }
 
     .tx-row-desc {
+      display: block;
       font-size: 15px;
       line-height: 1.3;
       color: var(--text);
@@ -1163,16 +1228,156 @@
     }
     @keyframes modalIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
     .modal-card-wide { width: min(880px, 96vw); }
+    /* La zona di caricamento è un <label> collegato a un input nascosto
+       (vedi .file-input): il selettore di file si apre col gesto nativo */
     .dropzone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
       border: 1.5px dashed var(--border-light);
       border-radius: 10px;
-      padding: 36px 20px;
+      padding: 32px 20px;
       text-align: center;
       color: var(--text-dim);
+      background: var(--surface-soft);
       cursor: pointer;
-      transition: all 0.18s;
+      transition: border-color 0.18s, background 0.18s, color 0.18s;
     }
-    .dropzone:hover, .dropzone.dragging { border-color: var(--gold); color: var(--gold); background: var(--accent-subtle); }
+    @media (hover: hover) {
+      .dropzone:hover { border-color: var(--gold); background: var(--accent-subtle); }
+    }
+    .dropzone.dragging { border-color: var(--gold); background: var(--accent-subtle); }
+    .dropzone:active { background: var(--accent-subtle); }
+    .dropzone.busy { cursor: progress; border-style: solid; border-color: var(--gold-dim); }
+    .dropzone-icon { color: var(--gold); margin-bottom: 4px; display: inline-flex; }
+    .dropzone-title { display: block; color: var(--text); font-size: 14px; line-height: 1.45; }
+    .dropzone-hint { display: block; color: var(--text-muted); font-size: var(--t-micro); line-height: 1.5; }
+    .dropzone-progress { display: grid; gap: 12px; width: min(360px, 100%); }
+    .dropzone-msg { color: var(--gold); font-size: var(--t-body); }
+
+    /* Il testo cambia col dispositivo: "trascina" non ha senso su un telefono */
+    .dropzone .only-coarse { display: none; }
+    .dropzone-alt { display: none; }
+    @media (hover: none) and (pointer: coarse) {
+      .dropzone .only-fine { display: none; }
+      .dropzone .only-coarse { display: block; }
+      .dropzone-alt { display: flex; margin-top: 10px; }
+    }
+    .dropzone-alt .btn-ghost {
+      flex: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 44px;
+    }
+    .is-disabled { opacity: 0.5; pointer-events: none; }
+
+    /* Nascosto alla vista ma non display:none: resta raggiungibile da
+       tastiera e il <label> collegato lo apre senza click() programmatici */
+    .file-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      min-height: 0;
+      margin: -1px;
+      padding: 0;
+      border: 0;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+      opacity: 0;
+    }
+    .file-input:focus-visible + label {
+      outline: 2px solid var(--gold);
+      outline-offset: 2px;
+    }
+
+    .inline-error {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      margin-top: 12px;
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--danger);
+    }
+    .inline-error svg { flex-shrink: 0; margin-top: 2px; }
+
+    /* ── Conferma dei dati estratti dal cedolino ── */
+    .import-confirm {
+      margin-top: 16px;
+      padding: 16px;
+      border: 1px solid var(--gold-dim);
+      border-radius: var(--radius-control);
+      background: var(--accent-subtle);
+      scroll-margin: 88px;
+    }
+    .import-confirm-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 12px;
+      min-width: 0;
+    }
+    .import-file {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: var(--t-micro);
+      color: var(--text-muted);
+    }
+    .import-note { margin: 0 0 12px; font-size: 12.5px; line-height: 1.5; color: var(--text-dim); }
+    .import-fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+      gap: 0 16px;
+    }
+    .import-fields .modal-field { margin-bottom: 12px; }
+    .amount-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 4px; }
+    .amount-chips-label {
+      margin-right: 4px;
+      font-size: var(--t-eyebrow);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .amount-chip {
+      min-height: 36px;
+      padding: 0 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border-light);
+      background: var(--surface-soft);
+      color: var(--text-dim);
+      font-family: var(--font-number);
+      font-variant-numeric: tabular-nums lining-nums;
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    .amount-chip.active { border-color: var(--gold); color: var(--gold); background: var(--accent-soft); }
+    @media (hover: hover) {
+      .amount-chip:hover { border-color: var(--gold-dim); color: var(--text); }
+    }
+    .import-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+
+    /* ── Revisione dell'estratto conto sul telefono ── */
+    .imp-card {
+      display: grid;
+      gap: 6px;
+      padding: 10px 12px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface-soft);
+      transition: opacity 0.15s;
+    }
+    .imp-card.off { opacity: 0.55; }
+    .imp-card-top { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, 0.8fr); gap: 10px; align-items: center; }
+    .imp-card-selects { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 10px; }
+    .imp-dup { font-size: var(--t-micro); color: var(--gold); }
     .imp-table { width: 100%; border-collapse: collapse; font-size: 12px; min-width: 720px; }
     .imp-table th { text-align: left; padding: 8px 8px; font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); border-bottom: 1px solid var(--border); white-space: nowrap; }
     .imp-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
@@ -1209,6 +1414,199 @@
     }
     .btn-ghost:hover { color: var(--text); border-color: var(--border-light); }
     @media (max-width: 560px) { .modal-grid { grid-template-columns: 1fr; } }
+
+    .data-head {
+      padding: 0 0 6px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 4px;
+      font-size: var(--t-eyebrow);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .data-head span { padding: 0 4px; }
+
+    .modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 14px; }
+    .modal-delete { margin-right: auto; }
+
+    /* ══════ Hero di sezione: parti condivise ══════
+       Le stesse dell'hero del Quadro, ora usate da ogni scheda */
+    .hero-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .hero-meta strong { font-family: var(--font-number); font-weight: 500; }
+    .hero-note { max-width: 46ch; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+    .aside-label {
+      margin-bottom: 12px;
+      font-size: var(--t-eyebrow);
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .part-row { margin-bottom: 12px; }
+    .part-row:last-child { margin-bottom: 0; }
+    .part-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 5px;
+    }
+    .part-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12.5px;
+      color: var(--text-dim);
+    }
+    .part-value {
+      white-space: nowrap;
+      font-family: var(--font-number);
+      font-variant-numeric: tabular-nums lining-nums;
+      font-size: 12.5px;
+      color: var(--text);
+    }
+    .part-share { margin-left: 8px; color: var(--text-muted); }
+    .recent-row { padding: 7px 0; margin: 0; border-top: 1px solid var(--border); }
+    .recent-row:first-of-type { border-top: 0; padding-top: 0; }
+    .arc-stat { display: flex; align-items: center; gap: 16px; }
+    .hero-foot .tx-head-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+    .hero-facts { display: grid; gap: 7px; margin-top: 16px; font-size: 12px; }
+    .hero-facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+    .hero-facts dt { color: var(--text-dim); }
+    .hero-facts dd {
+      margin: 0;
+      white-space: nowrap;
+      font-family: var(--font-number);
+      font-variant-numeric: tabular-nums lining-nums;
+      color: var(--text);
+    }
+    .hero-facts.stacked > div { flex-direction: column; gap: 1px; }
+    .hero-facts.stacked dd { font-size: 14px; }
+    .trend-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      margin-right: 6px;
+      font-family: var(--font-number);
+      font-size: var(--t-micro);
+    }
+
+    /* La cella che conta di più, in una striscia dove sono tutte uguali */
+    .stat-tile.stat-key { background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--card-solid); }
+    .stat-tile.stat-key .stat-value { font-size: calc(var(--t-stat) * 1.25); }
+
+    /* ── Grafici: legenda in HTML e ciambella ── */
+    .chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 16px;
+      margin: -4px 0 12px;
+      font-size: var(--t-micro);
+      color: var(--text-dim);
+    }
+    .chart-legend > span { display: inline-flex; align-items: center; gap: 7px; }
+    .chart-legend .swatch { display: inline-block; flex-shrink: 0; border-radius: 2px; }
+    .chart-legend .swatch.line { width: 14px; height: 3px; }
+    .chart-legend .swatch.box { width: 10px; height: 10px; border-radius: 3px; }
+    .donut-box { position: relative; width: 100%; }
+    .donut-center {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      pointer-events: none;
+    }
+    .donut-center-label {
+      font-size: var(--t-eyebrow);
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .donut-center-value {
+      font-family: var(--font-number);
+      font-variant-numeric: tabular-nums lining-nums;
+      font-size: 21px;
+      letter-spacing: -0.02em;
+      color: var(--gold);
+    }
+    .donut-legend { display: grid; margin-top: 14px; }
+    .legend-row {
+      display: grid;
+      grid-template-columns: 10px minmax(0, 1fr) auto auto;
+      gap: 10px;
+      align-items: center;
+      padding: 7px 0;
+      border-top: 1px solid var(--border);
+      font-size: 12.5px;
+    }
+    .legend-row .swatch { width: 10px; height: 10px; border-radius: 3px; }
+    .legend-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+    .legend-value { font-family: var(--font-number); font-variant-numeric: tabular-nums lining-nums; color: var(--text); }
+    .legend-share { min-width: 42px; text-align: right; font-size: var(--t-micro); color: var(--text-muted); }
+
+    /* ── Elenchi del telefono ──
+       Le tabelle larghe restano sul desktop; sul telefono diventano righe
+       che non si scorrono di lato */
+    .phone-list { display: none; }
+    .phone-only { display: none !important; }
+    .m-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface-soft);
+    }
+    .m-row.is-active { border-color: var(--gold-dim); background: var(--accent-soft); }
+    .m-row-title { font-size: 15px; line-height: 1.3; color: var(--text); overflow-wrap: anywhere; }
+    .m-row-sub { margin-top: 5px; font-size: var(--t-micro); line-height: 1.45; color: var(--text-dim); }
+    .m-row-end { display: flex; align-items: center; gap: 10px; }
+    .m-row-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    .m-row-value {
+      white-space: nowrap;
+      font-family: var(--font-number);
+      font-variant-numeric: tabular-nums lining-nums;
+      font-size: 17px;
+    }
+    .m-card {
+      display: grid;
+      gap: 8px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface-soft);
+      min-width: 0;
+    }
+    .m-card-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
+    .m-edit { padding: 4px 14px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-soft); }
+    .m-edit-head { display: flex; align-items: center; gap: 8px; }
+    .m-edit .row-delete { opacity: 1; }
+    .m-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 14px; }
+    .m-field { display: block; min-width: 0; }
+    .m-field > span {
+      display: block;
+      margin-top: 10px;
+      font-size: var(--t-eyebrow);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+    .m-field-wide { grid-column: 1 / -1; }
 
     /* ══════ Guscio mobile ══════
        Sul telefono la barra in basso conteneva nove voci in uno scroller
@@ -1361,8 +1759,14 @@
       }
 
       .tx-filter-chip-wrap {
-        display: block;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
         grid-column: span 6;
+      }
+
+      .tx-filter-chip-wrap .month-chip {
+        justify-content: center;
       }
 
       .tx-head-actions {
@@ -1378,6 +1782,13 @@
     }
 
     /* ── Responsive ── */
+    /* Quattro celle in fila stanno larghe solo sul desktop pieno */
+    @media (max-width: 1000px) {
+      .stat-strip[data-cols="4"] {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
     @media (max-width: 1200px) {
 
       .span-3,
@@ -1544,8 +1955,95 @@
         grid-column: span 3;
       }
 
+      /* …ma un grafico mai: a metà colonna la ciambella usciva dalla scheda */
+      .chart-card {
+        grid-column: span 6;
+      }
+
       .stat-tile {
         padding: 14px 12px;
+      }
+
+      .phone-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .phone-only {
+        display: inline-flex !important;
+      }
+
+      .desktop-only {
+        display: none !important;
+      }
+
+      .scenario-pair {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .hero-foot .tx-head-actions {
+        display: none;
+      }
+
+      .import-actions {
+        flex-direction: column-reverse;
+      }
+
+      .import-actions > * {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .amount-chip {
+        min-height: 44px;
+      }
+
+      /* ── Modali come fogli dal basso ──
+         Prima erano schede centrate con 48px d'aria sopra e sotto e
+         max-height 90vh: sul telefono il pulsante per salvare finiva sotto la
+         tastiera o oltre il bordo. Ora occupano lo schermo dal basso e la
+         barra delle azioni resta ancorata in fondo. */
+      .modal-overlay {
+        align-items: flex-end;
+        padding: calc(12px + env(safe-area-inset-top)) 0 0;
+        overflow: hidden;
+      }
+
+      .modal-card,
+      .modal-card-wide {
+        width: 100%;
+        max-height: 100%;
+        border-radius: 18px 18px 0 0;
+        border-bottom: 0;
+        background: var(--sheet-bg);
+        padding: 20px calc(16px + env(safe-area-inset-right)) 0 calc(16px + env(safe-area-inset-left));
+        animation: sheetIn 0.26s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+
+      .modal-actions {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        margin: 14px calc(-16px - env(safe-area-inset-right)) 0 calc(-16px - env(safe-area-inset-left));
+        padding: 12px calc(16px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+        background: var(--sheet-bg);
+        border-top: 1px solid var(--border);
+      }
+
+      .modal-actions .btn-primary {
+        flex: 1;
+        justify-content: center;
+      }
+
+      /* Tre pulsanti con testo non stanno in 390px: Elimina resta icona */
+      .modal-delete {
+        min-width: 44px;
+        justify-content: center;
+        padding: 8px 12px;
+      }
+
+      .modal-delete-label {
+        display: none;
       }
 
       .row-2 {
@@ -1593,9 +2091,22 @@
       }
 
       .data-edit-row {
-        grid-template-columns: minmax(0, 1fr) auto !important;
+        grid-template-columns: minmax(0, 1fr) minmax(76px, 32%) 44px !important;
         gap: 10px !important;
         padding: 8px 0 !important;
+      }
+
+      .data-edit-row[data-fields="3"] {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px !important;
+        row-gap: 0 !important;
+      }
+
+      .data-edit-row[data-fields="3"] > :first-child {
+        grid-column: 1 / -1;
+      }
+
+      .data-head.data-edit-row > :first-child {
+        display: none;
       }
 
       .data-edit-row .row-delete {
@@ -1631,8 +2142,8 @@
       }
 
       /* Tre celle affiancate a 390px sarebbero larghe 120px: si passa a due,
-         con l'ultima a tutta larghezza. Restano comunque due righe invece di
-         tre schede impilate a piena altezza. */
+         e se ne resta una dispari prende tutta la larghezza. Restano comunque
+         due righe invece di tre schede impilate a piena altezza. */
       .stat-strip {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
@@ -1641,7 +2152,7 @@
         padding: 14px 14px;
       }
 
-      .stat-tile:last-child {
+      .stat-tile:last-child:nth-child(odd) {
         grid-column: 1 / -1;
       }
 

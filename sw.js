@@ -1,5 +1,5 @@
 // Service worker per la PWA "Finanze"
-const CACHE = 'finanze-v3';
+const CACHE = 'finanze-v4';
 
 // Percorsi relativi alla posizione del service worker: cosi' il sito funziona
 // sia servito dalla radice sia da una sottocartella.
@@ -51,9 +51,11 @@ self.addEventListener('fetch', (e) => {
 
   // Il codice dell'app cambia a ogni build: rete per prima, cache come rete di sicurezza.
   // Senza questo una nuova build resta invisibile finche' non si svuota la cache a mano.
+  // no-cache: la richiesta si riconvalida sempre col server. Senza, la cache
+  // HTTP del browser poteva restituire l'app.js vecchio anche "dalla rete".
   if (url.pathname === ROOT + 'app.js' || url.pathname === ROOT + 'index.html') {
     e.respondWith(
-      fetch(request)
+      fetch(request, { cache: 'no-cache' })
         .then((resp) => {
           const copy = resp.clone();
           caches.open(CACHE).then((c) => c.put(request, copy));

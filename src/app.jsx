@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend, BarChart, Bar, RadialBarChart, RadialBar } = Recharts;
+const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, RadialBarChart, RadialBar } = Recharts;
 
 /* ── Icons ── */
 const Ic = {
@@ -28,7 +28,8 @@ const Ic = {
   theme: ({ size = 14 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3a9 9 0 1 0 9 9 6.6 6.6 0 0 1-9-9Z" /></svg>,
   more: ({ size = 20 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg>,
   chevron: ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>,
-  calendar: ({ size = 14 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
+  calendar: ({ size = 14 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>,
+  camera: ({ size = 16 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
 };
 
 /* ── Data ── */
@@ -257,7 +258,6 @@ const C = {
 const OUTFLOW = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 const RETAINED = 'var(--chart-retained)';
 const rampColor = (i, n) => OUTFLOW[Math.min(OUTFLOW.length - 1, Math.round((i / Math.max(1, n - 1)) * (OUTFLOW.length - 1)))];
-const PIE_COLORS = OUTFLOW;
 
 /* Il numero sale una volta sola, all'ingresso. Con moto ridotto arriva già al
    valore finale: nessuno stato intermedio da guardare. */
@@ -296,19 +296,194 @@ function useIsNarrow(maxWidth = 780) {
   return narrow;
 }
 
+/* ── Scala dei grafici ──
+   Una sola per tutte le schede. Prima ogni grafico aveva la sua altezza
+   fissa (340px per i mutui anche su un telefono da 390px), l'asse Y largo
+   60px di default e una legenda Recharts che andava a capo dentro l'area
+   disegnata, rubandole altezza. */
+function useChartScale() {
+  const narrow = useIsNarrow();
+  return useMemo(() => ({
+    narrow,
+    h: (desktop, phone) => (narrow ? phone : desktop),
+    yWidth: narrow ? 40 : 52,
+    axis: { stroke: C.textMuted, tick: { fontSize: narrow ? 10 : 11 }, tickLine: false },
+    minTickGap: narrow ? 14 : 6,
+    margin: { top: 8, right: narrow ? 6 : 14, left: 0, bottom: 0 }
+  }), [narrow]);
+}
+
+/* Etichette d'asse compatte: "1,5k" invece di "1500€", che a 390px si
+   sovrapponevano o venivano tagliate dall'asse */
+const fmtTick = (v) => {
+  const n = Number(v) || 0;
+  const a = Math.abs(n);
+  if (a >= 1000) return `${(n / 1000).toLocaleString('it-IT', { maximumFractionDigits: a >= 10000 ? 0 : 1 })}k`;
+  return `${Math.round(n)}€`;
+};
+
+/* Un solo stile per i tooltip: prima era ricopiato identico in quattro
+   posti. Il cursore di Recharts era un rettangolo grigio chiaro (#ccc) che
+   sul tema scuro accecava a ogni passaggio. */
+const TT = {
+  contentStyle: { background: C.bg, border: `1px solid ${C.gold}`, fontFamily: 'var(--font-number)', fontSize: 12, color: C.text, borderRadius: 4 },
+  itemStyle: { color: C.textDim },
+  labelStyle: { color: C.gold }
+};
+const TT_LINE = { ...TT, cursor: { stroke: 'var(--border-light)', strokeWidth: 1 } };
+const TT_BAR = { ...TT, cursor: { fill: 'var(--surface-hover)' } };
+
+/* Legenda in HTML sopra il grafico */
+function ChartLegend({ items, shape = 'line' }) {
+  return (
+    <div className="chart-legend">
+      {items.map(it => (
+        <span key={it.label}><span className={`swatch ${shape}`} style={{ background: it.color }} />{it.label}</span>
+      ))}
+    </div>
+  );
+}
+
+/* Ciambella con raggi in percentuale: prima erano 90px fissi e, nella
+   colonna a metà larghezza del telefono, il disco usciva dalla scheda. Il
+   totale al centro sta nella stessa scatola del grafico: prima stava in una
+   più alta di 30px e scendeva sotto il centro. */
+function Donut({ data, colors, height, center }) {
+  return (
+    <div className="donut-box" style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="66%" outerRadius="94%"
+            paddingAngle={2} stroke="var(--card-solid)" strokeWidth={2}>
+            {data.map((d, i) => <Cell key={d.name + i} fill={colors[i % colors.length]} />)}
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+      {center && <div className="donut-center">{center}</div>}
+    </div>
+  );
+}
+
+/* Gli spicchi senza nome non dicevano niente: ogni colore ha la sua riga,
+   con il valore e la quota. Sostituisce anche il tooltip, che sul telefono
+   copriva il totale al centro. */
+function DonutLegend({ data, colors }) {
+  const total = data.reduce((s, d) => s + d.value, 0);
+  return (
+    <div className="donut-legend">
+      {data.map((d, i) => (
+        <div key={d.name + i} className="legend-row">
+          <span className="swatch" style={{ background: colors[i % colors.length] }} />
+          <span className="legend-name" title={d.name}>{d.name}</span>
+          <span className="legend-value">{fmt(d.value)}</span>
+          <span className="legend-share">{fmtPct(d.value / Math.max(1, total))}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Hero di sezione ──
+   Lo stesso livello 1 del Quadro, ora in ogni scheda: un numero solo alla
+   scala grande e accanto il dato che lo spiega. Prima le altre sezioni
+   aprivano con quattro riquadri identici in fila, e niente contava più di
+   niente. */
+function PageHero({ label, value, format = fmt, tone, meta, aside, foot, footClass = '' }) {
+  const numeric = typeof value === 'number' && isFinite(value);
+  const shown = useCountUp(numeric ? value : 0);
+  return (
+    <section className="card-hero reveal">
+      <div className={aside ? 'hero-grid' : undefined}>
+        <div>
+          <div className="hero-label">{label}</div>
+          <div className="hero-value" style={tone ? { color: tone } : undefined}>{numeric ? format(shown) : value}</div>
+          {meta && <div className="hero-meta">{meta}</div>}
+        </div>
+        {aside && <div className="hero-aside">{aside}</div>}
+      </div>
+      {foot && <div className={`hero-foot ${footClass}`}>{foot}</div>}
+    </section>
+  );
+}
+
+function HeroDelta({ up, children }) {
+  return <span className={`hero-delta ${up ? 'up' : 'down'}`}>{up ? <Ic.up /> : <Ic.down />}{children}</span>;
+}
+
+/* Livello 3: nessun riquadro, un bordo per il gruppo e filetti fra le celle */
+function StatStrip({ items, delay = 60 }) {
+  return (
+    <div className="stat-strip reveal" data-cols={items.length} style={{ animationDelay: `${delay}ms`, '--cols': items.length }}>
+      {items.map(it => (
+        <div key={it.label} className={`stat-tile ${it.key ? 'stat-key' : ''}`}>
+          <div className="stat-label">{it.label}</div>
+          <div className="stat-value" style={it.color ? { color: it.color } : undefined}>
+            {it.value}{it.unit && <span className="unit">{it.unit}</span>}
+          </div>
+          {it.hint && <div className="stat-hint">{it.hint}</div>}
+          {it.extra}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TrendTag({ trend, invert }) {
+  if (trend === null || trend === undefined || !isFinite(trend) || trend === 0) return null;
+  const good = invert ? trend < 0 : trend > 0;
+  const TrendIc = trend >= 0 ? Ic.up : Ic.down;
+  return <span className="trend-tag" style={{ color: good ? C.sage : C.rust }}><TrendIc /> {fmtPct(Math.abs(trend))}</span>;
+}
+
+/* Barre "da cosa è fatto": nate nell'hero del Quadro, ora condivise. Con
+   `target` compare una tacca sul valore obiettivo. */
+function PartBars({ title, parts, total }) {
+  return (
+    <div>
+      {title && <div className="aside-label">{title}</div>}
+      {parts.map(p => {
+        const fill = p.fill !== undefined ? p.fill : p.value / Math.max(1, total);
+        const share = p.share !== undefined ? p.share : fmtPct(p.value / Math.max(1, total));
+        return (
+          <div key={p.name} className="part-row">
+            <div className="part-head">
+              <span className="part-name">{p.name}</span>
+              <span className="part-value">{p.display !== undefined ? p.display : fmt(p.value)}{share && <span className="part-share">{share}</span>}</span>
+            </div>
+            <div className="progress-track" style={{ height: 6 }}>
+              <div className="progress-fill" style={{ '--fill': Math.max(0, Math.min(1, fill)), background: p.color }} />
+              {p.target !== undefined && <span className="target-tick" style={{ left: `${Math.max(0, Math.min(100, p.target))}%` }} />}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* Sparkline: solo la forma dell'andamento, senza assi né griglia.
    Disegna i valori reali dello storico, non un ornamento. */
 function Sparkline({ points, color = C.gold, width = 260, height = 68 }) {
+  /* Il tratteggio dell'animazione si misura in pixel dello schermo (per via
+     di vector-effect), non nelle unità del viewBox: con la lunghezza del
+     viewBox la linea, stirata in larghezza, restava disegnata a metà con un
+     buco in mezzo. Si ricalcola sulla larghezza reale. */
+  const svgRef = useRef(null);
+  const [scaleX, setScaleX] = useState(1);
+  React.useLayoutEffect(() => {
+    if (svgRef.current && svgRef.current.clientWidth) setScaleX(svgRef.current.clientWidth / width);
+  }, [width, points && points.length]);
   if (!points || points.length < 2) return null;
   const min = Math.min(...points), max = Math.max(...points);
-  const span = max - min || 1;
+  const span = max - min;
   const stepX = width / (points.length - 1);
-  const coords = points.map((v, i) => [i * stepX, height - ((v - min) / span) * (height - 8) - 4]);
+  // Valori tutti uguali: linea a metà altezza, non schiacciata sul fondo
+  const coords = points.map((v, i) => [i * stepX, span ? height - ((v - min) / span) * (height - 8) - 4 : height / 2]);
   const d = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-  const len = coords.reduce((s, c, i) => i === 0 ? 0 : s + Math.hypot(c[0] - coords[i - 1][0], c[1] - coords[i - 1][1]), 0);
+  const len = coords.reduce((s, c, i) => i === 0 ? 0 : s + Math.hypot((c[0] - coords[i - 1][0]) * scaleX, c[1] - coords[i - 1][1]), 0);
   return (
-    <svg className="hero-spark" viewBox={`0 0 ${width} ${height}`} width="100%" height={height}
-      preserveAspectRatio="none" aria-hidden="true" style={{ '--spark-len': Math.ceil(len) }}>
+    <svg ref={svgRef} className="hero-spark" viewBox={`0 0 ${width} ${height}`} width="100%" height={height}
+      preserveAspectRatio="none" aria-hidden="true" style={{ '--spark-len': Math.ceil(len) + 4 }}>
       <path d={d} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
     </svg>
   );
@@ -317,16 +492,24 @@ function Sparkline({ points, color = C.gold, width = 260, height = 68 }) {
 /* Arco del tasso di risparmio: prima occupava un riquadro alto 350px con
    dentro 200px di grafico e il resto aria. Qui sta accanto al numero. */
 function SavingArc({ rate, size = 62 }) {
-  const pct = Math.max(0, Math.min(1, rate / 0.5));
+  const color = rate >= 0.2 ? C.sage : rate >= 0.1 ? C.gold : C.rust;
+  return <ArcMeter pct={rate / 0.5} color={color} size={size} />;
+}
+
+/* Lo stesso arco, per qualunque quota da 0 a 1 (es. il win rate dei mercati) */
+function ArcMeter({ pct: rawPct, color, size = 62 }) {
+  const pct = Math.max(0, Math.min(1, rawPct || 0));
   const r = (size - 7) / 2, cx = size / 2, cy = size / 2;
   const circ = 2 * Math.PI * r;
-  const color = rate >= 0.2 ? C.sage : rate >= 0.1 ? C.gold : C.rust;
   return (
     <svg width={size} height={size} aria-hidden="true" style={{ flexShrink: 0 }}>
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--border)" strokeWidth="5" />
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="5" strokeLinecap="round"
-        strokeDasharray={`${(circ * pct).toFixed(1)} ${circ.toFixed(1)}`}
-        transform={`rotate(-90 ${cx} ${cy})`} />
+      {/* A zero l'arco non si disegna: il capo arrotondato lasciava un puntino */}
+      {pct > 0 && (
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="5" strokeLinecap="round"
+          strokeDasharray={`${(circ * pct).toFixed(1)} ${circ.toFixed(1)}`}
+          transform={`rotate(-90 ${cx} ${cy})`} />
+      )}
     </svg>
   );
 }
@@ -500,15 +683,29 @@ function Section({ title, total, children, accent }) {
     </section>
   );
 }
+/* Sul telefono la griglia passava a due colonne con tre figli: il cestino
+   finiva da solo su una riga, sotto ogni voce. Ora ha la sua colonna; con
+   più di un numero (le rate) il nome prende una riga intera e sopra i numeri
+   c'è un'intestazione, che prima mancava anche sul desktop. */
 function DataTable({ items, section, onUpdate, onRemove, fields, fieldLabels }) {
+  const cols = fields.length === 2 ? '2fr 1fr auto' : `2fr repeat(${fields.length - 1}, 1fr) auto`;
+  const labelOf = (f) => (fieldLabels && fieldLabels[f]) || (f === 'label' ? 'Voce' : 'Importo');
   return (
     <div>
+      {fields.length > 2 && (
+        <div className="data-head data-edit-row" data-fields={fields.length} style={{ display: 'grid', gridTemplateColumns: cols, gap: 12 }} aria-hidden="true">
+          {fields.map(f => <span key={f} style={f !== 'label' ? { textAlign: 'right' } : undefined}>{labelOf(f)}</span>)}
+          <span />
+        </div>
+      )}
       {items.map(item => (
-        <div key={item.id} className="data-row data-edit-row" style={{ display: 'grid', gridTemplateColumns: fields.length === 2 ? '2fr 1fr auto' : `2fr repeat(${fields.length - 1}, 1fr) auto`, gap: 12, alignItems: 'center', padding: '4px 0' }}>
+        <div key={item.id} className="data-row data-edit-row" data-fields={fields.length} style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, alignItems: 'center', padding: '4px 0' }}>
           {fields.map(f => (
-            <input key={f} type={f === 'label' ? 'text' : 'number'} value={item[f]} onChange={e => onUpdate(section, item.id, f, e.target.value)} className={f === 'label' ? 'input-label' : 'input-cell'} placeholder={fieldLabels?.[f] || f} style={f !== 'label' ? { textAlign: 'right' } : {}} />
+            <input key={f} type={f === 'label' ? 'text' : 'number'} inputMode={f === 'label' ? undefined : 'decimal'} value={item[f]}
+              onChange={e => onUpdate(section, item.id, f, e.target.value)} className={f === 'label' ? 'input-label' : 'input-cell'}
+              placeholder={labelOf(f)} aria-label={labelOf(f)} style={f !== 'label' ? { textAlign: 'right' } : {}} />
           ))}
-          <button className="row-delete" onClick={() => onRemove(section, item.id)} style={{ background: 'none', border: 'none', color: C.danger, cursor: 'pointer', padding: 4 }}><Ic.trash /></button>
+          <button className="row-delete" onClick={() => onRemove(section, item.id)} aria-label={`Elimina ${item.label || 'voce'}`} style={{ background: 'none', border: 'none', color: C.danger, cursor: 'pointer', padding: 4 }}><Ic.trash /></button>
         </div>
       ))}
     </div>
@@ -542,58 +739,90 @@ function parseItalianAmount(str) {
   if (!str) return null;
   let s = String(str).trim().replace(/[€\s]/g, '');
   const hasComma = s.includes(','); const hasDot = s.includes('.');
-  if (hasComma && hasDot) { s = s.replace(/\./g, '').replace(',', '.'); }
+  // Con entrambi i separatori il decimale è l'ultimo dei due: vale per
+  // "1.550,00" e anche per "1,550.00" (che prima diventava 1,55)
+  if (hasComma && hasDot) {
+    s = s.lastIndexOf(',') > s.lastIndexOf('.') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  }
   else if (hasComma) { s = s.replace(',', '.'); }
   else if (hasDot && /\.\d{3}(\D|$)/.test(s) && !/\.\d{1,2}$/.test(s)) { s = s.replace(/\./g, ''); }
   const n = parseFloat(s);
   return isFinite(n) ? n : null;
 }
 
+/* Importi con i decimali, come compaiono in busta paga. Prima mancava il
+   confine dopo l'ultima cifra: in "1550,00" la prima alternativa si fermava
+   a "155" e il netto proposto era dieci volte più piccolo. Niente lookbehind:
+   su Safari prima della 16.4 una regex che lo usa non si compila e manda giù
+   l'intera app. */
+const DOC_AMOUNT_RE = /(^|[^0-9.,])(\d{1,3}(?:\.\d{3})+,\d{2}|\d{1,3}(?:,\d{3})+\.\d{2}|\d+,\d{2}|\d+\.\d{2})(?![0-9])/g;
+
+function findDocAmounts(text) {
+  const out = [];
+  const re = new RegExp(DOC_AMOUNT_RE.source, 'g');
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const value = parseItalianAmount(m[2]);
+    if (value !== null) out.push({ value, index: m.index + m[1].length });
+  }
+  return out;
+}
+
+const NETTO_KEYWORDS = [
+  'netto a pagare', 'netto del mese', 'netto in busta', 'netto bonifico', 'netto da corrispondere',
+  'totale netto', 'importo netto', 'totale competenze nette', 'totale a pagare', 'netto'
+];
+
 function parseFinancialDoc(text) {
   const result = { month: null, netto: null, candidates: [] };
   if (!text) return result;
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().replace(/\s+/g, ' ');
+  const mesi = MESI_IT.join('|');
 
-  // Mese: "gennaio 2024", "01/2024", "01-2024", "2024-01"
-  const reMese1 = new RegExp('\\b(' + MESI_IT.join('|') + ')\\s+(20\\d{2})\\b', 'i');
-  const m1 = lower.match(reMese1);
-  if (m1) {
-    const mm = meseItToNum(m1[1]);
-    if (mm) result.month = m1[2] + '-' + mm;
-  }
-  if (!result.month) {
-    const m2 = text.match(/\b(0[1-9]|1[0-2])[\/\-](20\d{2})\b/);
+  // Mese: prima quello accanto a "periodo", "mese", "competenza" — il primo
+  // "gennaio 2024" del documento poteva essere la data di assunzione
+  const nearName = lower.match(new RegExp('(?:periodo|mese|competenza|retribuzione)[^a-z0-9]{0,30}(' + mesi + ')[^a-z0-9]{0,3}(20\\d{2})'));
+  const nearNum = lower.match(/(?:periodo|mese|competenza)[^0-9]{0,30}(0[1-9]|1[0-2])[\/\-](20\d{2})\b/);
+  const anyName = lower.match(new RegExp('\\b(' + mesi + ')\\s+(20\\d{2})\\b'));
+  if (nearName) result.month = nearName[2] + '-' + meseItToNum(nearName[1]);
+  else if (nearNum) result.month = nearNum[2] + '-' + nearNum[1];
+  else if (anyName) result.month = anyName[2] + '-' + meseItToNum(anyName[1]);
+  else {
+    const m2 = lower.match(/\b(0[1-9]|1[0-2])[\/\-](20\d{2})\b/);
+    const m3 = lower.match(/\b(20\d{2})[\/\-](0[1-9]|1[0-2])\b/);
     if (m2) result.month = m2[2] + '-' + m2[1];
-    else {
-      const m3 = text.match(/\b(20\d{2})[\/\-](0[1-9]|1[0-2])\b/);
-      if (m3) result.month = m3[1] + '-' + m3[2];
-    }
+    else if (m3) result.month = m3[1] + '-' + m3[2];
   }
 
-  // Netto: cerca parole chiave seguite da numero
-  const keywords = [
-    'netto a pagare', 'netto del mese', 'totale netto',
-    'totale competenze nette', 'totale a pagare', 'importo netto',
-    'netto in busta', 'netto bonifico'
-  ];
-  const numPattern = '([0-9]{1,3}(?:[\\.\\s][0-9]{3})*(?:,[0-9]{2})?|[0-9]+(?:,[0-9]{2})?|[0-9]+\\.[0-9]{2})';
-  for (const kw of keywords) {
-    const re = new RegExp(kw.replace(/\s+/g, '\\s+') + '[\\s:€]*' + numPattern, 'i');
-    const m = lower.match(re);
-    if (m) {
-      const val = parseItalianAmount(m[1]);
-      if (val && val > 100 && val < 100000) {
-        result.candidates.push({ keyword: kw, value: val });
-        if (result.netto === null) result.netto = val;
-      }
+  const amounts = findDocAmounts(lower);
+  const seen = new Set();
+  const push = (value, keyword) => {
+    const k = value.toFixed(2);
+    if (seen.has(k)) return;
+    seen.add(k);
+    result.candidates.push({ value, keyword });
+  };
+
+  // Netto: il primo importo che segue la parola chiave entro 80 caratteri.
+  // Prima doveva starle attaccato, ma pdf.js mette spesso in mezzo le altre
+  // colonne della riga.
+  for (const kw of NETTO_KEYWORDS) {
+    let from = 0, idx;
+    while ((idx = lower.indexOf(kw, from)) !== -1) {
+      from = idx + kw.length;
+      const hit = amounts.find(a => a.index >= from && a.index - from <= 80 && a.value >= 100 && a.value < 100000);
+      if (hit) { push(hit.value, kw); break; }
     }
   }
-  if (result.netto === null) {
-    // Fallback: il più grande importo del documento (euristica)
-    const allNums = [...lower.matchAll(/([0-9]{1,3}(?:[\.\s][0-9]{3})+,[0-9]{2}|[0-9]+,[0-9]{2})/g)]
-      .map(x => parseItalianAmount(x[1])).filter(v => v && v > 500 && v < 20000);
-    if (allNums.length) result.netto = Math.max(...allNums);
-  }
+  result.netto = result.candidates.length ? result.candidates[0].value : null;
+
+  // Gli altri importi plausibili diventano proposte da toccare. Prima il più
+  // grande del documento diventava da solo il netto: quasi sempre era il lordo.
+  amounts
+    .filter(a => a.value >= 300 && a.value <= 20000)
+    .sort((a, b) => b.value - a.value)
+    .forEach(a => push(a.value, null));
+  result.candidates = result.candidates.slice(0, 6);
   return result;
 }
 
@@ -608,7 +837,12 @@ function loadScript(src) {
     el.src = src;
     el.async = true;
     el.onload = () => resolve();
-    el.onerror = () => { delete scriptCache[src]; reject(new Error(`Impossibile caricare ${src}`)); };
+    el.onerror = () => {
+      delete scriptCache[src];
+      const err = new Error(`Impossibile caricare ${src}`);
+      err.code = 'LOAD';
+      reject(err);
+    };
     document.head.appendChild(el);
   });
   return scriptCache[src];
@@ -623,7 +857,7 @@ const TESSERACT_URL = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tess
 
 async function ensurePdfJs(onProgress) {
   if (window.pdfjsLib) return window.pdfjsLib;
-  if (onProgress) onProgress('Carico il lettore PDF...');
+  if (onProgress) onProgress('Carico il lettore PDF…');
   await loadScript(PDFJS_URL);
   if (!window.pdfjsLib) throw new Error('PDF.js non disponibile');
   window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
@@ -632,50 +866,94 @@ async function ensurePdfJs(onProgress) {
 
 async function ensureTesseract(onProgress) {
   if (window.Tesseract) return window.Tesseract;
-  if (onProgress) onProgress('Carico il motore OCR...');
+  if (onProgress) onProgress('Carico il motore OCR…');
   await loadScript(TESSERACT_URL);
   if (!window.Tesseract) throw new Error('Tesseract.js non disponibile');
   return window.Tesseract;
 }
 
+/* Le foto del telefono arrivano a 12 MP e con la rotazione scritta solo
+   nell'EXIF. Date così a Tesseract finivano la memoria di Safari su iPhone,
+   e un cedolino fotografato in verticale veniva letto di traverso. Un <img>
+   applica già la rotazione: lo si ridisegna rimpicciolito e in grigio. */
+function prepareImageForOcr(file, maxSide = 2000) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const w = img.naturalWidth, h = img.naturalHeight;
+      if (!w || !h) { reject(new Error('IMAGE_DECODE')); return; }
+      const scale = Math.min(1, maxSide / Math.max(w, h));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(w * scale);
+      canvas.height = Math.round(h * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.filter = 'grayscale(1) contrast(1.15)'; // ignorato dove non è supportato
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('IMAGE_DECODE')); };
+    img.src = url;
+  });
+}
+
+const ocrLogger = (report) => (m) => {
+  if (m.status === 'recognizing text') report('Riconosco il testo…', m.progress);
+  else if (m.status) report('Preparo il riconoscimento del testo…', null);
+};
+
+/* onProgress(messaggio, quota 0–1 oppure null se non si sa quanto manca) */
 async function extractTextFromFile(file, onProgress) {
+  const report = (msg, pct) => onProgress && onProgress(msg, pct);
   const name = (file.name || '').toLowerCase();
   const isPdf = name.endsWith('.pdf') || file.type === 'application/pdf';
   if (isPdf) {
-    await ensurePdfJs(onProgress);
+    await ensurePdfJs(report);
     const buf = await file.arrayBuffer();
     const pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
     let full = '';
     for (let i = 1; i <= pdf.numPages; i++) {
-      if (onProgress) onProgress(`Lettura pagina ${i}/${pdf.numPages}...`);
+      report(`Leggo la pagina ${i} di ${pdf.numPages}…`, i / pdf.numPages);
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
       full += content.items.map(it => it.str).join(' ') + '\n';
     }
     if (full.replace(/\s/g, '').length < 30) {
-      // PDF probabilmente scansionato → fallback OCR sulla prima pagina
-      if (onProgress) onProgress('PDF scansionato, eseguo OCR...');
-      const Tesseract = await ensureTesseract(onProgress);
+      // PDF probabilmente scansionato → OCR sulla prima pagina
+      report('PDF scansionato: riconosco il testo…', null);
+      const Tesseract = await ensureTesseract(report);
       const page = await pdf.getPage(1);
       const viewport = page.getViewport({ scale: 2 });
       const canvas = document.createElement('canvas');
       canvas.width = viewport.width; canvas.height = viewport.height;
       await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-      const { data } = await Tesseract.recognize(canvas, 'ita');
+      const { data } = await Tesseract.recognize(canvas, 'ita', { logger: ocrLogger(report) });
       full = data.text || '';
     }
     return full;
   }
   // Immagini → OCR
-  if (file.type.startsWith('image/')) {
-    const Tesseract = await ensureTesseract(onProgress);
-    if (onProgress) onProgress('OCR immagine in corso...');
-    const { data } = await Tesseract.recognize(file, 'ita', {
-      logger: m => { if (m.status === 'recognizing text' && onProgress) onProgress(`OCR ${Math.round(m.progress * 100)}%`); }
-    });
+  if ((file.type || '').startsWith('image/') || /\.(jpe?g|png|heic|heif|webp)$/.test(name)) {
+    const Tesseract = await ensureTesseract(report);
+    report('Preparo la foto…', null);
+    const canvas = await prepareImageForOcr(file);
+    const { data } = await Tesseract.recognize(canvas, 'ita', { logger: ocrLogger(report) });
     return data.text || '';
   }
-  throw new Error('Formato file non supportato');
+  throw new Error('UNSUPPORTED');
+}
+
+/* Un errore che dice cosa fare, non solo cosa è successo */
+function describeImportError(e) {
+  const msg = (e && e.message) || String(e || '');
+  if ((e && e.code === 'LOAD') || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+    return 'Il lettore dei PDF e il riconoscimento del testo si scaricano da internet al primo uso: collegati e riprova.';
+  }
+  if (msg === 'UNSUPPORTED') return 'Formato non supportato: scegli un PDF oppure una foto (JPEG, PNG o HEIC).';
+  if (msg === 'IMAGE_DECODE') return 'Non riesco ad aprire questa foto. Riprova scattandola dal pulsante della fotocamera, oppure salvala in JPEG.';
+  if (/password/i.test(msg) || (e && e.name === 'PasswordException')) return 'Il PDF è protetto da password: aprilo, salvane una copia senza protezione e riprova.';
+  return `Non sono riuscito a leggere il file (${msg}). Puoi comunque inserire i dati a mano.`;
 }
 
 /* ── Parser estratti conto → movimenti ── */
@@ -834,64 +1112,88 @@ function isDuplicateTx(tx, existing) {
 }
 
 /* ── Cedolini Tab ── */
-function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
-  const [form, setForm] = React.useState({ month: currentISO || '', netto: '', note: '' });
-  const [err, setErr] = React.useState('');
-  const [isDragging, setIsDragging] = React.useState(false);
-  const [loading, setLoading] = React.useState('');
-  const [confirmData, setConfirmData] = React.useState(null);
-  const fileInputRef = React.useRef(null);
+const shortMonthLabel = (key) => {
+  const [y, m] = String(key || '').split('-');
+  return `${(MESI_IT[parseInt(m, 10) - 1] || '').slice(0, 3)} ${String(y || '').slice(2)}`;
+};
 
-  const handleFileUpload = async (file) => {
-    if (!file) return;
-    setLoading('Analisi del documento in corso...');
+function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
+  const [form, setForm] = useState({ month: currentISO || '', netto: '', note: '' });
+  const [err, setErr] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const [loading, setLoading] = useState(null); // null | { msg, pct }
+  const [importErr, setImportErr] = useState('');
+  const [confirmData, setConfirmData] = useState(null);
+  const [confirmErr, setConfirmErr] = useState('');
+  const confirmRef = useRef(null);
+  const scale = useChartScale();
+  const busy = !!loading;
+
+  /* Sul telefono il pannello di conferma compare sotto la piega: senza
+     questo il file sembrava non aver prodotto nulla */
+  const hasConfirm = !!confirmData;
+  useEffect(() => {
+    if (!hasConfirm || !confirmRef.current) return;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    confirmRef.current.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
+  }, [hasConfirm]);
+
+  const handleFile = async (file) => {
+    if (!file || busy) return;
+    setImportErr(''); setConfirmErr(''); setConfirmData(null);
+    setLoading({ msg: 'Apro il documento…', pct: null });
     try {
-      const text = await extractTextFromFile(file, (msg) => setLoading(msg));
+      const text = await extractTextFromFile(file, (msg, pct) => setLoading({ msg, pct: pct === undefined ? null : pct }));
       const parsed = parseFinancialDoc(text);
-      if (!parsed.netto && !parsed.month) {
-        showToast && showToast('Estrazione fallita: dati non riconosciuti');
-        setLoading('');
-        return;
-      }
+      /* Anche se non si trova niente il pannello si apre: prima un avviso di
+         due secondi e mezzo chiudeva la faccenda, e il file era perso */
       setConfirmData({
         month: parsed.month || currentISO || '',
-        netto: parsed.netto ? String(parsed.netto.toFixed(2)) : '',
+        netto: parsed.netto ? parsed.netto.toFixed(2) : '',
         note: `Importato da ${file.name}`,
-        candidates: parsed.candidates,
-        fileName: file.name
+        candidates: parsed.candidates || [],
+        fileName: file.name,
+        found: !!parsed.netto
       });
-      setLoading('');
     } catch (e) {
       console.error(e);
-      showToast && showToast('Errore: ' + e.message);
-      setLoading('');
+      setImportErr(describeImportError(e));
+    } finally {
+      setLoading(null);
     }
+  };
+
+  const onPick = (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (f) handleFile(f);
   };
 
   const onDrop = (e) => {
     e.preventDefault(); setIsDragging(false);
     const f = e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) handleFileUpload(f);
+    if (f) handleFile(f);
   };
 
   const confirmImport = () => {
     if (!confirmData) return;
-    if (!confirmData.month.match(/^\d{4}-\d{2}$/)) { showToast && showToast('Mese non valido'); return; }
-    const n = Number(confirmData.netto);
-    if (!n || n <= 0) { showToast && showToast('Netto non valido'); return; }
+    if (!/^\d{4}-\d{2}$/.test(confirmData.month)) { setConfirmErr('Scegli il mese del cedolino.'); return; }
+    const n = Number(String(confirmData.netto).replace(',', '.'));
+    if (!(n > 0)) { setConfirmErr('Inserisci il netto in euro, maggiore di zero.'); return; }
     if (cedolini.find(c => c.month === confirmData.month)) {
-      showToast && showToast('Cedolino già presente per questo mese'); return;
+      setConfirmErr(`C'è già un cedolino per ${itMonthLabel(confirmData.month)}: eliminalo dall'elenco prima di importarne un altro.`);
+      return;
     }
-    onAdd({ id: Date.now(), month: confirmData.month, netto: n, note: confirmData.note });
-    setConfirmData(null);
+    onAdd({ id: Date.now(), month: confirmData.month, netto: Math.round(n * 100) / 100, note: confirmData.note });
+    setConfirmData(null); setConfirmErr('');
     showToast && showToast('Cedolino importato dal documento');
   };
 
   const sorted = [...cedolini].sort((a, b) => a.month.localeCompare(b.month));
 
   const handleAdd = () => {
-    if (!form.month.match(/^\d{4}-\d{2}$/)) { setErr('Formato mese non valido (YYYY-MM)'); return; }
-    const nettoNum = Number(form.netto);
+    if (!/^\d{4}-\d{2}$/.test(form.month)) { setErr('Scegli il mese (formato AAAA-MM).'); return; }
+    const nettoNum = Number(String(form.netto).replace(',', '.'));
     if (!nettoNum || nettoNum <= 0) { setErr('Inserisci un netto valido'); return; }
     if (cedolini.find(c => c.month === form.month)) { setErr('Cedolino già presente per questo mese'); return; }
     onAdd({ id: Date.now(), month: form.month, netto: nettoNum, note: form.note });
@@ -899,90 +1201,142 @@ function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
     setErr('');
   };
 
-  const chartData = sorted.map(c => ({ month: c.month, netto: c.netto }));
-
-  const avg = sorted.length > 0
-    ? sorted.reduce((s, c) => s + c.netto, 0) / sorted.length
-    : 0;
+  const chartData = sorted.map(c => ({ month: shortMonthLabel(c.month), netto: c.netto }));
+  const avg = sorted.length > 0 ? sorted.reduce((s, c) => s + c.netto, 0) / sorted.length : 0;
+  const last = sorted[sorted.length - 1];
+  const prevC = sorted[sorted.length - 2];
+  const lastDelta = last && prevC ? last.netto - prevC.netto : null;
+  const minC = sorted.length ? sorted.reduce((m, c) => c.netto < m.netto ? c : m) : null;
+  const maxC = sorted.length ? sorted.reduce((m, c) => c.netto > m.netto ? c : m) : null;
+  const deltaOf = (c) => {
+    const i = sorted.indexOf(c);
+    return i > 0 ? c.netto - sorted[i - 1].netto : null;
+  };
+  const deltaText = (d) => d === null ? '—' : `${d >= 0 ? '+' : '−'}${fmt(Math.abs(d))}`;
+  const deltaColor = (d) => d === null ? C.textMuted : d >= 0 ? C.sage : C.rust;
 
   return (
     <div className="bento">
 
-      {/* Drag & Drop importazione */}
+      {sorted.length > 0 && (
+        <PageHero label="Netto medio mensile" value={avg}
+          meta={<span>{sorted.length} {sorted.length === 1 ? 'mese registrato' : 'mesi registrati'} · da {itMonthLabel(sorted[0].month)}</span>}
+          aside={(
+            <div>
+              <div className="aside-label">Ultimi cedolini</div>
+              {[...sorted].reverse().slice(0, 4).map(c => {
+                const d = deltaOf(c);
+                return (
+                  <div key={c.id} className="part-head recent-row">
+                    <span className="part-name">{itMonthLabel(c.month)}</span>
+                    <span className="part-value">{fmt(c.netto)}<span className="part-share" style={{ color: deltaColor(d) }}>{deltaText(d)}</span></span>
+                  </div>
+                );
+              })}
+            </div>
+          )} />
+      )}
+      {sorted.length > 0 && (
+        <StatStrip items={[
+          { label: 'Ultimo netto', value: fmt(last.netto), color: C.gold, hint: <>{itMonthLabel(last.month)}{lastDelta !== null && <span style={{ color: deltaColor(lastDelta) }}> · {deltaText(lastDelta)}</span>}</> },
+          { label: 'Netto minimo', value: fmt(minC.netto), color: C.rust, hint: itMonthLabel(minC.month) },
+          { label: 'Netto massimo', value: fmt(maxC.netto), color: C.sage, hint: itMonthLabel(maxC.month) }
+        ]} />
+      )}
+
+      {/* ── Importazione ──
+          Il riquadro è un <label> collegato all'input: il selettore si apre
+          col gesto nativo, senza il click() programmatico lanciato da un
+          contenitore che riceveva a sua volta il click. Sul telefono la
+          conferma stava in una griglia 160px + 180px + due bottoni: a 390px
+          "Conferma" finiva fuori dalla scheda e non si poteva premere. */}
       <div className="bento-card span-12">
         <h3 className="card-title">
-          <span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Importa da PDF / immagine</span></span>
-          <span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>cedolini · estratti conto</span>
+          <span><span className="diamond">◆</span><span>Importa da PDF / immagine</span></span>
+          <span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>PDF · foto · OCR</span>
         </h3>
-        <div
-          onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+        <input id="cedolino-file" className="file-input" type="file" accept="application/pdf,image/*"
+          disabled={busy} onChange={onPick} />
+        <label htmlFor="cedolino-file" className={`dropzone ${isDragging ? 'dragging' : ''} ${busy ? 'busy' : ''}`}
+          onDragOver={e => { e.preventDefault(); if (!busy) setIsDragging(true); }}
           onDragLeave={() => setIsDragging(false)}
-          onDrop={onDrop}
-          onClick={() => fileInputRef.current && fileInputRef.current.click()}
-          style={{
-            border: `2px dashed ${isDragging ? C.gold : C.borderLight}`,
-            background: isDragging ? 'var(--accent-subtle)' : 'var(--surface-soft)',
-            borderRadius: 8, padding: '32px 20px', textAlign: 'center',
-            cursor: loading ? 'wait' : 'pointer', transition: 'all 0.2s',
-            opacity: loading ? 0.7 : 1
-          }}>
-          <input ref={fileInputRef} type="file" accept="application/pdf,image/*"
-            style={{ display: 'none' }}
-            onChange={e => { const f = e.target.files[0]; if (f) handleFileUpload(f); e.target.value = ''; }} />
-          {loading ? (
-            <div>
-              <div style={{ fontSize: 28, marginBottom: 10 }}>⏳</div>
-              <div style={{ color: C.gold, fontSize: 13, letterSpacing: '0.05em' }}>{loading}</div>
-            </div>
+          onDrop={onDrop} aria-busy={busy}>
+          {busy ? (
+            <span className="dropzone-progress" role="status" aria-live="polite">
+              <span className="dropzone-msg">{loading.msg}</span>
+              <span className={`progress-track ${loading.pct === null ? 'indeterminate' : ''}`} style={{ display: 'block' }}>
+                <span className="progress-fill" style={{ display: 'block', '--fill': loading.pct === null ? 0.35 : loading.pct, background: C.gold }} />
+              </span>
+            </span>
           ) : (
-            <div>
-              <div style={{ fontSize: 28, marginBottom: 10, color: C.gold }}>⤓</div>
-              <div style={{ color: C.text, fontSize: 14, marginBottom: 6 }}>
-                Trascina qui un <strong>cedolino PDF</strong> o un <strong>estratto conto</strong>
-              </div>
-              <div style={{ color: C.textMuted, fontSize: 11.5 }}>
-                oppure clicca per selezionare · supportati PDF e immagini (OCR)
-              </div>
-            </div>
+            <>
+              <span className="dropzone-icon"><Ic.upload size={22} /></span>
+              <span className="dropzone-title only-fine">Trascina qui un <strong>cedolino</strong> in PDF o una foto</span>
+              <span className="dropzone-title only-coarse">Tocca per scegliere il <strong>cedolino</strong>: PDF o foto</span>
+              <span className="dropzone-hint only-fine">oppure clicca per selezionarlo · il netto viene letto in automatico</span>
+              <span className="dropzone-hint only-coarse">da File, dalla libreria Foto o con la fotocamera</span>
+            </>
           )}
+        </label>
+        <div className="dropzone-alt">
+          <input id="cedolino-camera" className="file-input" type="file" accept="image/*" capture="environment"
+            disabled={busy} onChange={onPick} />
+          <label htmlFor="cedolino-camera" className={`btn-ghost ${busy ? 'is-disabled' : ''}`}>
+            <Ic.camera /> Fotografa il cedolino
+          </label>
         </div>
+        {importErr && <div className="inline-error" role="alert"><Ic.alert size={15} /><span>{importErr}</span></div>}
 
         {confirmData && (
-          <div style={{ marginTop: 16, padding: 16, border: `1px solid ${C.gold}`, borderRadius: 6, background: 'var(--accent-subtle)' }}>
-            <div style={{ fontSize: 10, letterSpacing: '0.18em', textTransform: 'uppercase', color: C.gold, marginBottom: 12 }}>
-              Conferma dati estratti — {confirmData.fileName}
+          <div className="import-confirm" ref={confirmRef}>
+            <div className="import-confirm-head">
+              <span className="aside-label" style={{ color: C.gold, margin: 0 }}>Controlla e conferma</span>
+              <span className="import-file" title={confirmData.fileName}>{confirmData.fileName}</span>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '160px 180px 1fr auto auto', gap: 12, alignItems: 'end' }}>
-              <div>
-                <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Mese</label>
-                <input className="input-cell" value={confirmData.month}
+            {!confirmData.found && (
+              <p className="import-note">
+                Non ho trovato il netto nel documento: {confirmData.candidates.length ? 'tocca uno degli importi trovati oppure scrivilo tu.' : 'scrivilo tu qui sotto.'}
+              </p>
+            )}
+            <div className="import-fields">
+              <div className="modal-field">
+                <label htmlFor="ic-month">Mese</label>
+                <input id="ic-month" type="month" className="input-cell" placeholder="2026-04" value={confirmData.month}
                   onChange={e => setConfirmData(d => ({ ...d, month: e.target.value }))} />
               </div>
-              <div>
-                <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Netto (€)</label>
-                <input type="number" className="input-cell" value={confirmData.netto}
+              <div className="modal-field">
+                <label htmlFor="ic-netto">Netto (€)</label>
+                <input id="ic-netto" type="number" inputMode="decimal" min="0" step="0.01" className="input-cell" value={confirmData.netto}
                   onChange={e => setConfirmData(d => ({ ...d, netto: e.target.value }))}
                   style={{ textAlign: 'right' }} />
               </div>
-              <div>
-                <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Note</label>
-                <input className="input-label" value={confirmData.note}
+              <div className="modal-field">
+                <label htmlFor="ic-note">Note</label>
+                <input id="ic-note" className="input-cell" value={confirmData.note}
                   onChange={e => setConfirmData(d => ({ ...d, note: e.target.value }))} />
               </div>
-              <button onClick={confirmImport}
-                style={{ background: C.gold, border: 'none', color: C.onAccent, padding: '10px 20px', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, letterSpacing: '0.08em', borderRadius: 6, whiteSpace: 'nowrap' }}>
-                ✓ Conferma
-              </button>
-              <button onClick={() => setConfirmData(null)}
-                style={{ background: 'transparent', border: `1px solid ${C.border}`, color: C.textDim, padding: '10px 16px', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, letterSpacing: '0.08em', borderRadius: 6 }}>
-                Annulla
-              </button>
             </div>
-            {confirmData.candidates && confirmData.candidates.length > 0 && (
-              <div style={{ marginTop: 12, fontSize: 11, color: C.textMuted }}>
-                Riconosciuto via: {confirmData.candidates.map(c => `"${c.keyword}" → ${fmt(c.value)}`).join(' · ')}
+            {confirmData.candidates.length > 0 && (
+              <div className="amount-chips">
+                <span className="amount-chips-label">Importi trovati</span>
+                {confirmData.candidates.map(c => {
+                  const v = c.value.toFixed(2);
+                  const active = Math.abs(Number(confirmData.netto) - c.value) < 0.005;
+                  return (
+                    <button key={v} type="button" className={`amount-chip ${active ? 'active' : ''}`} aria-pressed={active}
+                      title={c.keyword ? `accanto a "${c.keyword}"` : undefined}
+                      onClick={() => setConfirmData(d => ({ ...d, netto: v }))}>
+                      {fmtEUR2(c.value)}
+                    </button>
+                  );
+                })}
               </div>
             )}
+            {confirmErr && <div className="inline-error" role="alert"><Ic.alert size={15} /><span>{confirmErr}</span></div>}
+            <div className="import-actions">
+              <button type="button" className="btn-ghost" onClick={() => { setConfirmData(null); setConfirmErr(''); }}>Annulla</button>
+              <button type="button" className="btn-primary" onClick={confirmImport}><Ic.check /> Conferma</button>
+            </div>
           </div>
         )}
       </div>
@@ -990,64 +1344,48 @@ function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
       {/* Form aggiunta */}
       <div className="bento-card span-12">
         <h3 className="card-title">
-          <span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Inserisci cedolino</span></span>
+          <span><span className="diamond">◆</span><span>Inserisci cedolino</span></span>
         </h3>
         {/* Colonne fisse 160/180px sfondavano il contenitore a 390px:
             qui si riflowano da sole */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16, alignItems: 'end' }}>
-          <div>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Mese (YYYY-MM)</label>
-            <input
-              className="input-cell"
-              placeholder="2026-04"
-              value={form.month}
-              onChange={e => setForm(f => ({ ...f, month: e.target.value }))}
-            />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))', gap: 16, alignItems: 'end' }}>
+          <div className="modal-field" style={{ margin: 0 }}>
+            <label htmlFor="cf-month">Mese</label>
+            <input id="cf-month" type="month" className="input-cell" placeholder="2026-04" value={form.month}
+              onChange={e => setForm(f => ({ ...f, month: e.target.value }))} />
           </div>
-          <div>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Netto a pagare (€)</label>
-            <input
-              type="number"
-              className="input-cell"
-              placeholder="1550"
-              value={form.netto}
-              onChange={e => setForm(f => ({ ...f, netto: e.target.value }))}
-              style={{ textAlign: 'right' }}
-            />
+          <div className="modal-field" style={{ margin: 0 }}>
+            <label htmlFor="cf-netto">Netto a pagare (€)</label>
+            <input id="cf-netto" type="number" inputMode="decimal" className="input-cell" placeholder="1550" value={form.netto}
+              onChange={e => setForm(f => ({ ...f, netto: e.target.value }))} style={{ textAlign: 'right' }} />
           </div>
-          <div>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Note (opzionale)</label>
-            <input
-              className="input-label"
-              placeholder="Arretrati, vigilanze, ecc."
-              value={form.note}
-              onChange={e => setForm(f => ({ ...f, note: e.target.value }))}
-            />
+          <div className="modal-field" style={{ margin: 0 }}>
+            <label htmlFor="cf-note">Note (opzionale)</label>
+            <input id="cf-note" className="input-label" placeholder="Arretrati, vigilanze, ecc." value={form.note}
+              onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
           </div>
           <button className="btn-primary" onClick={handleAdd} style={{ justifyContent: 'center' }}>
             <Ic.plus /> Aggiungi
           </button>
         </div>
-        {err && <div style={{ marginTop: 10, fontSize: 12, color: C.danger }}>{err}</div>}
+        {err && <div className="inline-error" role="alert"><Ic.alert size={15} /><span>{err}</span></div>}
       </div>
 
       {/* Chart trend netto */}
       {sorted.length > 1 && (
-        <div className="bento-card span-12">
+        <div className="bento-card span-12 chart-card">
           <h3 className="card-title">
-            <span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Trend netto mensile</span></span>
+            <span><span className="diamond">◆</span><span>Trend netto mensile</span></span>
             <span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>media {fmt(avg)}</span>
           </h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={chartData}>
+          <ResponsiveContainer width="100%" height={scale.h(240, 190)}>
+            <LineChart data={chartData} margin={scale.margin}>
               <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
-              <XAxis dataKey="month" stroke={C.textMuted} tick={{ fontSize: 11 }} />
-              <YAxis stroke={C.textMuted} tickFormatter={v => `${v}€`} tick={{ fontSize: 11 }} />
-              <Tooltip
-                contentStyle={{ background: C.bg, border: `1px solid ${C.gold}`, fontFamily: 'var(--font-number)', fontSize: 12, color: C.text, borderRadius: 4 }}
-                formatter={v => [fmt(v), 'Netto']}
-              />
-              <Line type="monotone" dataKey="netto" stroke={C.gold} strokeWidth={2.5} dot={{ r: 5, fill: C.gold }} name="Netto" />
+              <XAxis dataKey="month" {...scale.axis} minTickGap={scale.minTickGap} />
+              <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick}
+                domain={[min => Math.max(0, Math.floor((min * 0.92) / 100) * 100), max => Math.ceil((max * 1.04) / 100) * 100]} />
+              <Tooltip {...TT_LINE} formatter={v => [fmt(v), 'Netto']} />
+              <Line type="monotone" dataKey="netto" stroke={C.gold} strokeWidth={2.5} dot={{ r: scale.narrow ? 3 : 5, fill: C.gold }} name="Netto" />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -1056,85 +1394,78 @@ function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
       {/* Tabella cedolini */}
       <div className="bento-card span-12">
         <h3 className="card-title">
-          <span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Cedolini registrati</span></span>
+          <span><span className="diamond">◆</span><span>Cedolini registrati</span></span>
           <span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>{sorted.length} mesi</span>
         </h3>
 
         {sorted.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: C.textMuted }}>
-            <div style={{ fontSize: 32, marginBottom: 12 }}>📄</div>
-            <p>Nessun cedolino inserito. Usa il form sopra per aggiungere il netto mensile.</p>
+          <div style={{ padding: '32px 12px', textAlign: 'center', color: C.textMuted }}>
+            <div style={{ color: C.gold, marginBottom: 12 }}><Ic.receipt size={28} /></div>
+            <p>Nessun cedolino inserito. Importa un PDF o una foto qui sopra, oppure inserisci il netto a mano.</p>
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                  {['Mese', 'Netto', 'Δ mese prec.', 'Stato', 'Note', ''].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '10px 8px', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.15em', color: C.textMuted, fontWeight: 500 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((c, i) => {
-                  const prev = sorted[i - 1];
-                  const delta = prev ? c.netto - prev.netto : null;
-                  const isActive = c.month === currentISO;
-                  return (
-                    <tr key={c.id} style={{ borderBottom: `1px solid ${C.border}`, background: isActive ? 'var(--accent-subtle)' : 'transparent' }}>
-                      <td className="mono-font" style={{ padding: '12px 8px', color: isActive ? C.gold : C.text }}>{c.month}</td>
-                      <td className="mono-font" style={{ padding: '12px 8px', color: C.gold, fontWeight: 600 }}>{fmt(c.netto)}</td>
-                      <td className="mono-font" style={{ padding: '12px 8px', color: delta === null ? C.textMuted : delta >= 0 ? C.sage : C.rust }}>
-                        {delta === null ? '—' : `${delta >= 0 ? '+' : ''}${fmt(delta)}`}
-                      </td>
-                      <td style={{ padding: '12px 8px' }}>
-                        {isActive && (
-                          <span style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.gold, border: `1px solid ${C.goldDim}`, padding: '2px 8px', borderRadius: 3 }}>
-                            Mese corrente
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ padding: '12px 8px', color: C.textDim, fontSize: 12, maxWidth: 200 }}>{c.note || '—'}</td>
-                      <td style={{ padding: '12px 8px' }}>
-                        <button
-                          onClick={() => onRemove(c.id)}
-                          style={{ background: 'none', border: 'none', color: C.danger, cursor: 'pointer', opacity: 0.6, transition: 'opacity 0.2s' }}
-                          onMouseEnter={e => e.currentTarget.style.opacity = 1}
-                          onMouseLeave={e => e.currentTarget.style.opacity = 0.6}>
-                          <Ic.trash />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <div className="desktop-table" style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                    {['Mese', 'Netto', 'Δ mese prec.', 'Stato', 'Note', ''].map(h => (
+                      <th key={h} style={{ textAlign: 'left', padding: '10px 8px', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.15em', color: C.textMuted, fontWeight: 500 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map(c => {
+                    const delta = deltaOf(c);
+                    const isActive = c.month === currentISO;
+                    return (
+                      <tr key={c.id} style={{ borderBottom: `1px solid ${C.border}`, background: isActive ? 'var(--accent-subtle)' : 'transparent' }}>
+                        <td className="mono-font" style={{ padding: '12px 8px', color: isActive ? C.gold : C.text }}>{c.month}</td>
+                        <td className="mono-font" style={{ padding: '12px 8px', color: C.gold, fontWeight: 600 }}>{fmt(c.netto)}</td>
+                        <td className="mono-font" style={{ padding: '12px 8px', color: deltaColor(delta) }}>{deltaText(delta)}</td>
+                        <td style={{ padding: '12px 8px' }}>
+                          {isActive && <span className="badge badge-gold">Mese corrente</span>}
+                        </td>
+                        <td style={{ padding: '12px 8px', color: C.textDim, fontSize: 12, maxWidth: 200 }}>{c.note || '—'}</td>
+                        <td style={{ padding: '12px 8px' }}>
+                          <button className="tx-action-btn danger" onClick={() => onRemove(c.id)} aria-label={`Elimina cedolino ${itMonthLabel(c.month)}`}>
+                            <Ic.trash />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {/* Telefono: una riga per mese, dal più recente, senza scorrere di lato */}
+            <div className="phone-list">
+              {[...sorted].reverse().map(c => {
+                const delta = deltaOf(c);
+                const isActive = c.month === currentISO;
+                return (
+                  <div key={c.id} className={`m-row ${isActive ? 'is-active' : ''}`}>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="m-row-title">{itMonthLabel(c.month)}</div>
+                      <div className="m-row-sub">
+                        <span style={{ color: deltaColor(delta) }}>{delta === null ? 'primo registrato' : deltaText(delta)}</span>
+                        {isActive && ' · mese corrente'}
+                        {c.note ? ` · ${c.note}` : ''}
+                      </div>
+                    </div>
+                    <div className="m-row-end">
+                      <span className="m-row-value" style={{ color: C.gold }}>{fmt(c.netto)}</span>
+                      <button className="tx-action-btn danger" onClick={() => onRemove(c.id)} aria-label={`Elimina cedolino ${itMonthLabel(c.month)}`}>
+                        <Ic.trash />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
-
-      {/* KPI summary */}
-      {sorted.length > 0 && (
-        <div className="bento-card span-4">
-          <div className="card-eyebrow">Media netto</div>
-          <div className="kpi-value" style={{ color: C.gold }}>{fmt(avg)}</div>
-          <div className="kpi-sub">{sorted.length} mesi registrati</div>
-        </div>
-      )}
-      {sorted.length > 0 && (
-        <div className="bento-card span-4 accent-rust">
-          <div className="card-eyebrow">Netto minimo</div>
-          <div className="kpi-value" style={{ color: C.rust }}>{fmt(Math.min(...sorted.map(c => c.netto)))}</div>
-          <div className="kpi-sub">{sorted.reduce((m, c) => c.netto < m.netto ? c : m).month}</div>
-        </div>
-      )}
-      {sorted.length > 0 && (
-        <div className="bento-card span-4 accent-sage">
-          <div className="card-eyebrow">Netto massimo</div>
-          <div className="kpi-value" style={{ color: C.sage }}>{fmt(Math.max(...sorted.map(c => c.netto)))}</div>
-          <div className="kpi-sub">{sorted.reduce((m, c) => c.netto > m.netto ? c : m).month}</div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1159,6 +1490,7 @@ function monthsUntil(dateStr) {
 /* ── Investments Tab ── */
 function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, onUpdateTarget }) {
   const investments = data.investments;
+  const scale = useChartScale();
 
   const totalInvested = totals.totalInvestCurrent;
   const totalEntry = investments.reduce((s, i) => s + Number(i.entryValue || 0), 0);
@@ -1172,13 +1504,17 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
     return acc;
   }, { num: 0, den: 0 });
   const roiPct = weighted.den > 0 ? (weighted.num / weighted.den) * 100 : 0;
+  // Guadagno solo sulle posizioni con un capitale d'ingresso noto
+  const gain = investments.reduce((s, i) => {
+    const ev = Number(i.entryValue || 0);
+    return ev > 0 ? s + Number(i.current || 0) - ev : s;
+  }, 0);
 
   const allocMap = investments.reduce((acc, i) => {
     const t = i.type || 'Equity';
     acc[t] = (acc[t] || 0) + Number(i.current || 0);
     return acc;
   }, {});
-  const allocPie = Object.entries(allocMap).map(([name, value]) => ({ name, value }));
   const target = data.investmentsMeta.targetAllocation;
   const categories = Array.from(new Set([...Object.keys(target), ...Object.keys(allocMap)]));
   const allocBars = categories.map(cat => ({
@@ -1186,6 +1522,19 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
     Attuale: totalInvested > 0 ? +((allocMap[cat] || 0) / totalInvested * 100).toFixed(1) : 0,
     Target: Number(target[cat] || 0)
   }));
+  /* Allocazione per tipo, con la tacca sul target. Sostituisce la torta
+     senza etichette, che non diceva a quale tipo corrispondesse ogni colore. */
+  const typeParts = categories.map(cat => {
+    const share = totalInvested > 0 ? (allocMap[cat] || 0) / totalInvested : 0;
+    return {
+      name: cat,
+      value: allocMap[cat] || 0,
+      fill: share,
+      color: TYPE_COLORS[cat] || C.gold,
+      target: Number(target[cat] || 0),
+      share: `${(share * 100).toFixed(0)}% · target ${Number(target[cat] || 0)}%`
+    };
+  });
 
   const pipMonthly = 250;
   const pipYears = 36;
@@ -1194,44 +1543,27 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
   const costOpportunity = finB - finA;
 
   const roadmapMonths = monthsUntil('2026-09-09');
-
-  const ttStyle = { contentStyle: { background: C.bg, border: `1px solid ${C.gold}`, fontFamily: 'var(--font-number)', fontSize: 12, color: C.text, borderRadius: 4 }, itemStyle: { color: C.textDim }, labelStyle: { color: C.gold } };
+  const TYPES = ['Equity', 'Pensione', 'Cripto', 'Bond', 'Liquidita'];
 
   return (
     <div className="bento">
 
-      {/* KPI row */}
-      <div className="bento-card span-3">
-        <div className="card-eyebrow">Patrimonio investito</div>
-        <div className="kpi-value" style={{ color: C.gold }}>{fmt(totalInvested)}</div>
-        <div className="kpi-sub">{investments.length} posizioni · capitale {fmt(totalEntry)}</div>
-      </div>
+      <PageHero label="Patrimonio investito" value={totalInvested}
+        meta={<>
+          {totalEntry > 0 && <HeroDelta up={gain >= 0}>{fmt(Math.abs(gain))} sul capitale</HeroDelta>}
+          <span>{investments.length} {investments.length === 1 ? 'posizione' : 'posizioni'} · capitale {fmt(totalEntry)}</span>
+        </>}
+        aside={<PartBars title="Per tipo · attuale e target" parts={typeParts} total={totalInvested} />} />
 
-      <div className="bento-card span-3 accent-sage">
-        <div className="card-eyebrow">Rendimento medio ponderato</div>
-        <div className="kpi-value" style={{ color: roiPct >= 0 ? C.sage : C.rust }}>
-          {roiPct >= 0 ? '+' : ''}{roiPct.toFixed(2)}%
-        </div>
-        <div className="kpi-sub">media pesata su valore corrente</div>
-      </div>
-
-      <div className="bento-card span-3">
-        <div className="card-eyebrow">PAC mensile totale</div>
-        <div className="kpi-value" style={{ color: C.gold }}>{fmt(totals.totalInvestMonthly)}</div>
-        <div className="kpi-sub">in accumulo automatico</div>
-      </div>
-
-      <div className="bento-card span-3 accent-rust">
-        <div className="card-eyebrow">Peso su patrimonio netto</div>
-        <div className="kpi-value" style={{ color: C.purple }}>
-          {totals.netWorth > 0 ? ((totalInvested / totals.netWorth) * 100).toFixed(1) : '0.0'}%
-        </div>
-        <div className="kpi-sub">su {fmt(totals.netWorth)} totali</div>
-      </div>
+      <StatStrip items={[
+        { label: 'Rendimento medio ponderato', value: `${roiPct >= 0 ? '+' : ''}${roiPct.toFixed(2)}%`, color: roiPct >= 0 ? C.sage : C.rust, hint: 'media pesata su valore corrente' },
+        { label: 'PAC mensile totale', value: fmt(totals.totalInvestMonthly), color: C.gold, hint: 'in accumulo automatico' },
+        { label: 'Peso su patrimonio netto', value: `${totals.netWorth > 0 ? ((totalInvested / totals.netWorth) * 100).toFixed(1) : '0.0'}%`, color: C.purple, hint: `su ${fmt(totals.netWorth)} totali` }
+      ]} />
 
       {/* Performance per posizione */}
-      <div className="bento-card span-12">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Performance per posizione</span></span></h3>
+      <div className="bento-card span-7">
+        <h3 className="card-title"><span><span className="diamond">◆</span><span>Performance per posizione</span></span></h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {investments.map(inv => {
             const cv = Number(inv.current || 0);
@@ -1244,8 +1576,8 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
             return (
               <div key={inv.id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 14, background: 'var(--surface-soft)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                    <span className="display-font" style={{ fontSize: 16, fontStyle: 'italic', color: C.text }}>{inv.label}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0 }}>
+                    <span className="display-font" style={{ fontSize: 16, color: C.text }}>{inv.label}</span>
                     <span style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: typeColor, border: `1px solid ${typeColor}`, padding: '2px 8px', borderRadius: 3 }}>{inv.type}</span>
                     <span style={{ fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.textDim, border: `1px solid ${C.border}`, padding: '2px 8px', borderRadius: 3 }}>{inv.risk}</span>
                   </div>
@@ -1256,7 +1588,7 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
                 <div className="progress-track" style={{ height: 10 }}>
                   <div className="progress-fill" style={{ '--fill': (progressPct) / 100, background: roi >= 0 ? `linear-gradient(90deg, ${C.goldDim}, ${C.sage})` : `linear-gradient(90deg, ${C.rust}, ${C.goldDim})` }} />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 11 }} className="mono-font">
+                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px 12px', marginTop: 8, fontSize: 11 }} className="mono-font">
                   <span style={{ color: C.textDim }}>Attuale {fmt(cv)} · Capitale {fmt(ev)}</span>
                   <span style={{ color: C.gold }}>PAC {fmt(inv.monthly)}/m</span>
                 </div>
@@ -1266,42 +1598,25 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
         </div>
       </div>
 
-      {/* Allocazione attuale (Pie) */}
-      <div className="bento-card span-6">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Allocazione attuale per tipo</span></span></h3>
-        {allocPie.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: C.textMuted }}>Nessun investimento.</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={260}>
-            <PieChart>
-              <Pie data={allocPie} dataKey="value" cx="50%" cy="50%" innerRadius={55} outerRadius={95} paddingAngle={2} label={({ name, percent }) => percent > 0.04 ? `${name} ${(percent * 100).toFixed(0)}%` : ''} labelLine={false}>
-                {allocPie.map((d, i) => <Cell key={i} fill={TYPE_COLORS[d.name] || PIE_COLORS[i % PIE_COLORS.length]} />)}
-              </Pie>
-              <Tooltip {...ttStyle} formatter={(v) => fmt(v)} />
-            </PieChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
       {/* Attuale vs Target (Bar) */}
-      <div className="bento-card span-6">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Attuale vs Target</span></span></h3>
-        <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={allocBars} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+      <div className="bento-card span-5 chart-card">
+        <h3 className="card-title"><span><span className="diamond">◆</span><span>Attuale vs Target</span></span></h3>
+        <ChartLegend shape="box" items={[{ label: 'Attuale', color: C.gold }, { label: 'Target', color: C.sage }]} />
+        <ResponsiveContainer width="100%" height={scale.h(220, 190)}>
+          <BarChart data={allocBars} margin={scale.margin}>
             <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
-            <XAxis dataKey="name" stroke={C.textMuted} tick={{ fontSize: 11 }} />
-            <YAxis stroke={C.textMuted} tickFormatter={v => `${v}%`} tick={{ fontSize: 11 }} />
-            <Tooltip {...ttStyle} formatter={(v) => `${v}%`} />
-            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <XAxis dataKey="name" {...scale.axis} interval={0} />
+            <YAxis {...scale.axis} width={scale.narrow ? 34 : 40} tickFormatter={v => `${v}%`} />
+            <Tooltip {...TT_BAR} formatter={(v) => `${v}%`} />
             <Bar dataKey="Attuale" fill={C.gold} radius={[4, 4, 0, 0]} />
             <Bar dataKey="Target" fill={C.sage} radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
-        <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+        <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 100px), 1fr))', gap: 10, alignItems: 'end' }}>
           {Object.keys(target).map(cat => (
             <div key={cat} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <label style={{ fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.textMuted }}>{cat} target %</label>
-              <input type="number" className="input-cell mono-font" value={target[cat]} onChange={e => onUpdateTarget(cat, e.target.value)} style={{ textAlign: 'right' }} />
+              <label htmlFor={`tgt-${cat}`} style={{ fontSize: 9, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.textMuted }}>{cat} target %</label>
+              <input id={`tgt-${cat}`} type="number" inputMode="decimal" className="input-cell mono-font" value={target[cat]} onChange={e => onUpdateTarget(cat, e.target.value)} style={{ textAlign: 'right' }} />
             </div>
           ))}
         </div>
@@ -1309,8 +1624,8 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
 
       {/* PIP cost analysis */}
       <div className="bento-card span-12">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Analisi costo PIP (36 anni, 250€/m)</span></span></h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+        <h3 className="card-title"><span><span className="diamond">◆</span><span>Analisi costo PIP (36 anni, 250€/m)</span></span></h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 16 }}>
           <div style={{ borderLeft: `1px solid ${C.rust}`, paddingLeft: 14 }}>
             <div style={{ fontSize: 10, letterSpacing: '0.18em', textTransform: 'uppercase', color: C.rust, marginBottom: 6 }}>Scenario A — PIP Alleata</div>
             <div className="display-font number-display" style={{ fontSize: 26, color: C.rust }}>{fmt(finA)}</div>
@@ -1336,8 +1651,8 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
       <div className="bento-card span-12">
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
           <div style={{ color: C.gold, marginTop: 2 }}><Ic.clock size={22} /></div>
-          <div style={{ flex: 1, minWidth: 220 }}>
-            <h4 className="display-font" style={{ margin: '0 0 4px', fontSize: 17, fontStyle: 'italic' }}>Roadmap settembre 2026</h4>
+          <div style={{ flex: 1, minWidth: 'min(100%, 220px)' }}>
+            <h4 className="display-font" style={{ margin: '0 0 4px', fontSize: 17 }}>Roadmap settembre 2026</h4>
             <div className="mono-font" style={{ fontSize: 12, color: C.gold, marginBottom: 10 }}>
               {roadmapMonths} mesi al rinnovo contratto (09/09/2026)
             </div>
@@ -1350,10 +1665,12 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
         </div>
       </div>
 
-      {/* Tabella editable originale + colonna entryValue */}
+      {/* Posizioni: tabella su desktop, schede modificabili sul telefono.
+          Prima la tabella larga 720px si scorreva di lato e i nomi restavano
+          tagliati ("PIP Alleata Pre", "Bitcoin (Crypt"). */}
       <div className="bento-card span-12">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Posizioni di investimento</span></span><span className="mono-font" style={{ fontSize: 13, color: C.gold }}>{fmt(totalInvested)} · +{fmt(totals.totalInvestMonthly)}/m</span></h3>
-        <div style={{ overflowX: 'auto' }}>
+        <h3 className="card-title"><span><span className="diamond">◆</span><span>Posizioni di investimento</span></span><span className="mono-font" style={{ fontSize: 13, color: C.gold }}>{fmt(totalInvested)} · +{fmt(totals.totalInvestMonthly)}/m</span></h3>
+        <div className="desktop-table" style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 720 }}>
             <thead>
               <tr style={{ borderBottom: `1px solid ${C.border}` }}>
@@ -1365,23 +1682,49 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
             <tbody>
               {investments.map(inv => (
                 <tr key={inv.id} className="data-row" style={{ borderBottom: `1px solid ${C.border}` }}>
-                  <td style={{ padding: '4px 8px' }}><input className="input-label" value={inv.label} onChange={e => onUpdateField('investments', inv.id, 'label', e.target.value)} /></td>
-                  <td style={{ padding: '4px 8px' }}><input type="number" className="input-cell" value={inv.current} onChange={e => onUpdateField('investments', inv.id, 'current', e.target.value)} /></td>
-                  <td style={{ padding: '4px 8px' }}><input type="number" className="input-cell" value={inv.entryValue || 0} onChange={e => onUpdateField('investments', inv.id, 'entryValue', e.target.value)} /></td>
-                  <td style={{ padding: '4px 8px' }}><input type="number" className="input-cell" value={inv.monthly} onChange={e => onUpdateField('investments', inv.id, 'monthly', e.target.value)} /></td>
+                  <td style={{ padding: '4px 8px' }}><input className="input-label" value={inv.label} onChange={e => onUpdateField('investments', inv.id, 'label', e.target.value)} aria-label="Posizione" /></td>
+                  <td style={{ padding: '4px 8px' }}><input type="number" className="input-cell" value={inv.current} onChange={e => onUpdateField('investments', inv.id, 'current', e.target.value)} aria-label="Valore attuale" /></td>
+                  <td style={{ padding: '4px 8px' }}><input type="number" className="input-cell" value={inv.entryValue || 0} onChange={e => onUpdateField('investments', inv.id, 'entryValue', e.target.value)} aria-label="Capitale investito" /></td>
+                  <td style={{ padding: '4px 8px' }}><input type="number" className="input-cell" value={inv.monthly} onChange={e => onUpdateField('investments', inv.id, 'monthly', e.target.value)} aria-label="PAC mensile" /></td>
                   <td style={{ padding: '4px 8px' }}>
-                    <select value={inv.type} onChange={e => onUpdateField('investments', inv.id, 'type', e.target.value)} className="input-cell" style={{ background: C.card }}>
-                      <option>Equity</option><option>Pensione</option><option>Cripto</option><option>Bond</option><option>Liquidita</option>
+                    <select value={inv.type} onChange={e => onUpdateField('investments', inv.id, 'type', e.target.value)} className="input-cell" style={{ background: C.card }} aria-label="Tipo">
+                      {TYPES.map(t => <option key={t}>{t}</option>)}
                     </select>
                   </td>
-                  <td style={{ padding: '4px 8px' }}><input className="input-label mono-font" value={inv.risk} onChange={e => onUpdateField('investments', inv.id, 'risk', e.target.value)} style={{ fontSize: 12 }} /></td>
+                  <td style={{ padding: '4px 8px' }}><input className="input-label mono-font" value={inv.risk} onChange={e => onUpdateField('investments', inv.id, 'risk', e.target.value)} style={{ fontSize: 12 }} aria-label="Rischio" /></td>
                   <td style={{ padding: '4px 8px' }}>
-                    <button className="row-delete" onClick={() => onRemoveItem('investments', inv.id)} style={{ background: 'none', border: 'none', color: C.danger, cursor: 'pointer' }}><Ic.trash /></button>
+                    <button className="row-delete" onClick={() => onRemoveItem('investments', inv.id)} aria-label={`Elimina ${inv.label}`} style={{ background: 'none', border: 'none', color: C.danger, cursor: 'pointer' }}><Ic.trash /></button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="phone-list">
+          {investments.map(inv => (
+            <div key={inv.id} className="m-edit">
+              <div className="m-edit-head">
+                <input className="input-label" value={inv.label} aria-label="Nome della posizione"
+                  onChange={e => onUpdateField('investments', inv.id, 'label', e.target.value)} />
+                <button className="row-delete" onClick={() => onRemoveItem('investments', inv.id)} aria-label={`Elimina ${inv.label}`}
+                  style={{ background: 'none', border: 'none', color: C.danger, cursor: 'pointer' }}><Ic.trash /></button>
+              </div>
+              <div className="m-edit-grid">
+                <label className="m-field"><span>Valore attuale</span>
+                  <input type="number" inputMode="decimal" className="input-cell" value={inv.current} onChange={e => onUpdateField('investments', inv.id, 'current', e.target.value)} /></label>
+                <label className="m-field"><span>Capitale investito</span>
+                  <input type="number" inputMode="decimal" className="input-cell" value={inv.entryValue || 0} onChange={e => onUpdateField('investments', inv.id, 'entryValue', e.target.value)} /></label>
+                <label className="m-field"><span>PAC mensile</span>
+                  <input type="number" inputMode="decimal" className="input-cell" value={inv.monthly} onChange={e => onUpdateField('investments', inv.id, 'monthly', e.target.value)} /></label>
+                <label className="m-field"><span>Tipo</span>
+                  <select value={inv.type} onChange={e => onUpdateField('investments', inv.id, 'type', e.target.value)} className="input-cell" style={{ background: C.card }}>
+                    {TYPES.map(t => <option key={t}>{t}</option>)}
+                  </select></label>
+                <label className="m-field m-field-wide"><span>Rischio</span>
+                  <input className="input-label" value={inv.risk} onChange={e => onUpdateField('investments', inv.id, 'risk', e.target.value)} /></label>
+              </div>
+            </div>
+          ))}
         </div>
         <AddBtn onClick={() => onAddItem('investments', { label: 'Nuova posizione', current: 0, entryValue: 0, monthly: 0, type: 'Equity', risk: 'Medio' })} />
       </div>
@@ -1391,7 +1734,7 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
           <div style={{ color: C.gold, marginTop: 2 }}><Ic.alert size={20} /></div>
           <div>
-            <h4 className="display-font" style={{ margin: '0 0 8px', fontSize: 16, fontStyle: 'italic' }}>Note sul PIP</h4>
+            <h4 className="display-font" style={{ margin: '0 0 8px', fontSize: 16 }}>Note sul PIP</h4>
             <p style={{ margin: 0, fontSize: 13, lineHeight: 1.6, color: C.textDim }}>
               Il PIP Alleata Previdenza ha un TER del 2,93% — sopra la media per ETF (0,15-0,25%).
               Proiezioni usano rendimento netto 4% annuo per "Pensione".
@@ -1409,6 +1752,7 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
 function SentimentPanel({ onPrefill }) {
   const [fng, setFng] = React.useState({ data: null, error: null, loading: true });
   const [poly, setPoly] = React.useState({ data: null, error: null, loading: true });
+  const scale = useChartScale();
 
   React.useEffect(() => {
     const ctrl = new AbortController();
@@ -1453,15 +1797,14 @@ function SentimentPanel({ onPrefill }) {
   const fngColor = (v) => v <= 25 ? C.danger : v <= 45 ? C.rust : v <= 55 ? C.gold : v <= 75 ? '#a0c774' : C.sage;
   const fngLabel = (v) => v <= 25 ? 'Extreme Fear' : v <= 45 ? 'Fear' : v <= 55 ? 'Neutral' : v <= 75 ? 'Greed' : 'Extreme Greed';
 
-  const ttStyle = { contentStyle: { background: C.bg, border: `1px solid ${C.gold}`, fontFamily: 'var(--font-number)', fontSize: 12, color: C.text, borderRadius: 4 }, itemStyle: { color: C.textDim }, labelStyle: { color: C.gold } };
-
   return (
     <div className="bento-card span-12">
-      <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Sentiment & feed live</span></span></h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 20 }}>
+      <h3 className="card-title"><span><span className="diamond">◆</span><span>Sentiment & feed live</span></span></h3>
+      {/* min(100%, 320px): a 360px la colonna minima di 320px sfondava la scheda */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 20 }}>
 
         {/* Fear & Greed */}
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div className="card-eyebrow" style={{ marginBottom: 12 }}>Crypto Fear & Greed (alternative.me)</div>
           {fng.loading && <div style={{ color: C.textMuted, fontSize: 12 }}>Caricamento…</div>}
           {fng.error && <div style={{ color: C.rust, fontSize: 12 }}>Dati non disponibili offline.</div>}
@@ -1471,11 +1814,11 @@ function SentimentPanel({ onPrefill }) {
                 <RadialGauge value={fngCurrent.value} max={100} label={fngCurrent.value} sub={fngLabel(fngCurrent.value).toUpperCase()} color={fngColor(fngCurrent.value)} size={140} />
               </div>
               <ResponsiveContainer width="100%" height={120}>
-                <LineChart data={fng.data}>
+                <LineChart data={fng.data} margin={scale.margin}>
                   <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
-                  <XAxis dataKey="date" stroke={C.textMuted} tick={{ fontSize: 10 }} />
-                  <YAxis stroke={C.textMuted} domain={[0, 100]} tick={{ fontSize: 10 }} />
-                  <Tooltip {...ttStyle} />
+                  <XAxis dataKey="date" {...scale.axis} minTickGap={scale.minTickGap} />
+                  <YAxis {...scale.axis} width={30} domain={[0, 100]} />
+                  <Tooltip {...TT_LINE} />
                   <Line type="monotone" dataKey="value" stroke={C.gold} strokeWidth={2} dot={{ r: 3, fill: C.gold }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -1484,7 +1827,7 @@ function SentimentPanel({ onPrefill }) {
         </div>
 
         {/* Polymarket top */}
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div className="card-eyebrow" style={{ marginBottom: 12 }}>Top 10 mercati Polymarket</div>
           {poly.loading && <div style={{ color: C.textMuted, fontSize: 12 }}>Caricamento…</div>}
           {poly.error && <div style={{ color: C.rust, fontSize: 12 }}>Feed non disponibile. Inserisci posizioni manualmente.</div>}
@@ -1504,7 +1847,7 @@ function SentimentPanel({ onPrefill }) {
                     </div>
                     <button
                       onClick={() => onPrefill({ market: m.question, outcome: 'YES', currency: 'USDC', entryProb: yesPct != null ? Math.max(1, Math.min(99, Math.round(yesPct))) : 50, currentProb: yesPct != null ? Math.max(1, Math.min(99, Math.round(yesPct))) : 50, deadline: (m.endDate || '').slice(0, 10) })}
-                      style={{ background: 'transparent', border: `1px solid ${C.goldDim}`, color: C.gold, padding: '4px 8px', fontSize: 10, letterSpacing: '0.08em', cursor: 'pointer', borderRadius: 4, whiteSpace: 'nowrap' }}>
+                      style={{ background: 'transparent', border: `1px solid ${C.goldDim}`, color: C.gold, padding: '4px 10px', fontSize: 11, letterSpacing: '0.06em', cursor: 'pointer', borderRadius: 6, whiteSpace: 'nowrap' }}>
                       + Watchlist
                     </button>
                   </div>
@@ -1519,10 +1862,13 @@ function SentimentPanel({ onPrefill }) {
 }
 
 /* ── Markets Tab ── */
+const POSITION_STATUSES = ['Aperta', 'Chiusa', 'Vinta', 'Persa'];
+
 function MarketsTab({ markets, onAdd, onUpdate, onRemove, onClose, onUpdateRate }) {
   const [form, setForm] = React.useState({ market: '', outcome: 'YES', currency: 'USDC', capitalRisked: '', entryProb: '', currentProb: '', deadline: '', note: '' });
   const [err, setErr] = React.useState('');
   const formRef = React.useRef(null);
+  const scale = useChartScale();
 
   const handlePrefill = React.useCallback((p) => {
     setForm(f => ({ ...f, ...p, capitalRisked: f.capitalRisked, note: f.note }));
@@ -1571,155 +1917,180 @@ function MarketsTab({ markets, onAdd, onUpdate, onRemove, onClose, onUpdateRate 
   }, 0);
 
   const unrealizedPnl = open.reduce((s, p) => s + p.capitalRisked * ((p.currentProb - p.entryProb) / Math.max(1, p.entryProb)), 0);
-  const winRate = (won.length + lost.length) > 0 ? (won.length / (won.length + lost.length)) * 100 : 0;
+  const closedCount = won.length + lost.length;
+  const winRate = closedCount > 0 ? (won.length / closedCount) * 100 : 0;
 
-  const ttStyle = { contentStyle: { background: C.bg, border: `1px solid ${C.gold}`, fontFamily: 'var(--font-number)', fontSize: 12, color: C.text, borderRadius: 4 }, itemStyle: { color: C.textDim }, labelStyle: { color: C.gold } };
+  const positionPnl = (p) => {
+    const delta = p.currentProb - p.entryProb;
+    if (p.status === 'Aperta') return p.capitalRisked * (delta / Math.max(1, p.entryProb));
+    if (p.status === 'Vinta') return p.capitalRisked * ((100 - p.entryProb) / Math.max(1, p.entryProb));
+    if (p.status === 'Persa') return -p.capitalRisked;
+    return 0;
+  };
+  const money = (p, v) => p.currency === 'USDC' ? fmtUSD(v) : fmtEUR2(v);
+  const signed = (v) => `${v >= 0 ? '+' : ''}${fmtEUR2(v)}`;
+  const labelStyle = { fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 };
 
   return (
     <div className="bento">
 
+      {/* Il risultato prima del modulo: prima la scheda si apriva con nove
+          campi vuoti e i numeri arrivavano solo dopo una schermata intera */}
+      <PageHero label="P&L realizzato" value={realizedPnl} format={signed}
+        tone={realizedPnl >= 0 ? C.sage : C.rust}
+        meta={<span>{won.length} vinte · {lost.length} perse · {open.length} aperte</span>}
+        aside={(
+          <div className="arc-stat">
+            <ArcMeter pct={winRate / 100} color={closedCount === 0 ? C.textMuted : winRate >= 50 ? C.sage : C.rust} size={84} />
+            <div>
+              <div className="aside-label" style={{ marginBottom: 6 }}>Win rate</div>
+              <div className="stat-value" style={{ color: closedCount === 0 ? C.textDim : winRate >= 50 ? C.sage : C.rust }}>{winRate.toFixed(1)}%</div>
+              <div className="stat-hint">{closedCount === 0 ? 'nessuna posizione chiusa' : `su ${closedCount} chiuse`}</div>
+            </div>
+          </div>
+        )} />
+
+      <StatStrip items={[
+        { label: 'Capitale a rischio (aperte)', value: fmt(totalRiskEur), color: C.gold, hint: `EUR ${fmtEUR2(openEur)} · USDC ${fmtUSD(openUsd)}` },
+        { label: 'P&L non realizzato', value: signed(unrealizedPnl), color: unrealizedPnl >= 0 ? C.sage : C.rust, hint: 'mark-to-market aperte' }
+      ]} />
+
+      {/* Positions */}
+      <div className="bento-card span-12">
+        <h3 className="card-title"><span><span className="diamond">◆</span><span>Posizioni</span></span><span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>{positions.length} totali</span></h3>
+        {positions.length === 0 ? (
+          <div style={{ padding: '32px 12px', textAlign: 'center', color: C.textMuted }}>
+            <p>Nessuna posizione. Aggiungine una dal modulo qui sotto o dalla watchlist Polymarket.</p>
+          </div>
+        ) : (
+          <>
+            <div className="desktop-table" style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 900 }}>
+                <thead>
+                  <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                    {['Mercato', 'Outcome', 'Val.', 'Capitale', 'Prob. ingr', 'Prob. att', 'Δ', 'Quota', 'P&L stim', 'Scad.', 'Stato', ''].map(h => (
+                      <th key={h} style={{ textAlign: 'left', padding: '8px 6px', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.12em', color: C.textMuted, fontWeight: 500 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {positions.map(p => {
+                    const delta = p.currentProb - p.entryProb;
+                    const quota = (100 / Math.max(1, p.entryProb)).toFixed(2);
+                    const isOpen = p.status === 'Aperta';
+                    const pnl = positionPnl(p);
+                    const rowBg = p.status === 'Vinta' ? 'rgba(107,142,111,0.10)'
+                      : p.status === 'Persa' ? 'rgba(197,69,69,0.10)'
+                        : (isOpen && p.currentProb > p.entryProb) ? 'var(--accent-soft)'
+                          : 'transparent';
+                    return (
+                      <tr key={p.id} className="data-row" style={{ borderBottom: `1px solid ${C.border}`, background: rowBg }}>
+                        <td style={{ padding: '8px 6px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.text }}>{p.market}</td>
+                        <td className="mono-font" style={{ padding: '8px 6px', color: C.textDim }}>{p.outcome}</td>
+                        <td className="mono-font" style={{ padding: '8px 6px', color: C.textDim }}>{p.currency}</td>
+                        <td className="mono-font" style={{ padding: '8px 6px', color: C.gold }}>{money(p, p.capitalRisked)}</td>
+                        <td className="mono-font" style={{ padding: '8px 6px' }}>{p.entryProb}%</td>
+                        <td style={{ padding: '4px 6px', width: 70 }}>
+                          <input type="number" className="input-cell mono-font" value={p.currentProb} onChange={e => onUpdate(p.id, 'currentProb', e.target.value)} style={{ fontSize: 12, padding: '4px 2px', textAlign: 'right' }} aria-label="Probabilità attuale" />
+                        </td>
+                        <td className="mono-font" style={{ padding: '8px 6px', color: delta >= 0 ? C.sage : C.rust }}>{delta >= 0 ? '+' : ''}{delta.toFixed(0)}</td>
+                        <td className="mono-font" style={{ padding: '8px 6px', color: C.textDim }}>{quota}x</td>
+                        <td className="mono-font" style={{ padding: '8px 6px', color: pnl >= 0 ? C.sage : C.rust }}>{pnl >= 0 ? '+' : ''}{money(p, pnl)}</td>
+                        <td className="mono-font" style={{ padding: '8px 6px', color: C.textMuted, fontSize: 11 }}>{p.deadline || '—'}</td>
+                        <td style={{ padding: '4px 6px' }}>
+                          <select value={p.status} onChange={e => onClose(p.id, e.target.value)} className="input-cell" style={{ background: C.card, fontSize: 11, padding: '4px 2px' }} aria-label="Stato">
+                            {POSITION_STATUSES.map(s => <option key={s}>{s}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: '8px 6px' }}>
+                          <button className="tx-action-btn danger" onClick={() => onRemove(p.id)} aria-label={`Elimina ${p.market}`}><Ic.trash /></button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {/* Telefono: una scheda per posizione invece di dodici colonne da
+                scorrere di lato */}
+            <div className="phone-list">
+              {positions.map(p => {
+                const pnl = positionPnl(p);
+                const quota = (100 / Math.max(1, p.entryProb)).toFixed(2);
+                return (
+                  <div key={p.id} className="m-card">
+                    <div className="m-row-top">
+                      <div className="m-row-title">{p.market}</div>
+                      <span className="m-row-value" style={{ color: pnl >= 0 ? C.sage : C.rust }}>{pnl >= 0 ? '+' : ''}{money(p, pnl)}</span>
+                    </div>
+                    <div className="m-row-sub">
+                      {p.outcome} · {money(p, p.capitalRisked)} · quota {quota}x{p.deadline ? ` · scad. ${p.deadline}` : ''}
+                    </div>
+                    <div className="m-card-controls">
+                      <label className="m-field"><span>Prob. att. (ingr. {p.entryProb}%)</span>
+                        <input type="number" inputMode="decimal" className="input-cell" value={p.currentProb} onChange={e => onUpdate(p.id, 'currentProb', e.target.value)} /></label>
+                      <label className="m-field"><span>Stato</span>
+                        <select value={p.status} onChange={e => onClose(p.id, e.target.value)} className="input-cell" style={{ background: C.card }}>
+                          {POSITION_STATUSES.map(s => <option key={s}>{s}</option>)}
+                        </select></label>
+                      <button className="tx-action-btn danger" onClick={() => onRemove(p.id)} aria-label={`Elimina ${p.market}`}><Ic.trash /></button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+
       {/* Form */}
-      <div className="bento-card span-12" ref={formRef}>
-        <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Aggiungi posizione</span></span></h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 14, alignItems: 'end' }}>
-          <div style={{ gridColumn: 'span 2', minWidth: 220 }}>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Mercato</label>
+      <div className="bento-card span-12" ref={formRef} style={{ scrollMarginTop: 80 }}>
+        <h3 className="card-title"><span><span className="diamond">◆</span><span>Aggiungi posizione</span></span></h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 140px), 1fr))', gap: 14, alignItems: 'end' }}>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>Mercato</label>
             <input className="input-cell" placeholder="Es. Trump wins 2028" value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))} />
           </div>
           <div>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Outcome</label>
+            <label style={labelStyle}>Outcome</label>
             <input className="input-cell" placeholder="YES / NO" value={form.outcome} onChange={e => setForm(f => ({ ...f, outcome: e.target.value }))} />
           </div>
           <div>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Valuta</label>
+            <label style={labelStyle}>Valuta</label>
             <select className="input-cell" value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value }))} style={{ background: C.card }}>
               <option>USDC</option><option>EUR</option>
             </select>
           </div>
           <div>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Capitale</label>
-            <input type="number" className="input-cell" placeholder="100" value={form.capitalRisked} onChange={e => setForm(f => ({ ...f, capitalRisked: e.target.value }))} style={{ textAlign: 'right' }} />
+            <label style={labelStyle}>Capitale</label>
+            <input type="number" inputMode="decimal" className="input-cell" placeholder="100" value={form.capitalRisked} onChange={e => setForm(f => ({ ...f, capitalRisked: e.target.value }))} style={{ textAlign: 'right' }} />
           </div>
           <div>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Prob. ingresso %</label>
-            <input type="number" className="input-cell" placeholder="35" value={form.entryProb} onChange={e => setForm(f => ({ ...f, entryProb: e.target.value }))} style={{ textAlign: 'right' }} />
+            <label style={labelStyle}>Prob. ingresso %</label>
+            <input type="number" inputMode="decimal" className="input-cell" placeholder="35" value={form.entryProb} onChange={e => setForm(f => ({ ...f, entryProb: e.target.value }))} style={{ textAlign: 'right' }} />
           </div>
           <div>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Prob. attuale %</label>
-            <input type="number" className="input-cell" placeholder="42" value={form.currentProb} onChange={e => setForm(f => ({ ...f, currentProb: e.target.value }))} style={{ textAlign: 'right' }} />
+            <label style={labelStyle}>Prob. attuale %</label>
+            <input type="number" inputMode="decimal" className="input-cell" placeholder="42" value={form.currentProb} onChange={e => setForm(f => ({ ...f, currentProb: e.target.value }))} style={{ textAlign: 'right' }} />
           </div>
           <div>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Scadenza</label>
+            <label style={labelStyle}>Scadenza</label>
             <input type="date" className="input-cell" value={form.deadline} onChange={e => setForm(f => ({ ...f, deadline: e.target.value }))} />
           </div>
-          <div style={{ gridColumn: 'span 2', minWidth: 220 }}>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Note</label>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label style={labelStyle}>Note</label>
             <input className="input-label" placeholder="Tesi, fonte, link…" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
           </div>
-          <button onClick={handleAdd} style={{ background: C.gold, border: 'none', color: C.onAccent, padding: '10px 20px', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, letterSpacing: '0.08em', borderRadius: 6, whiteSpace: 'nowrap', height: 42 }}>
-            + Aggiungi
+          <button className="btn-primary" onClick={handleAdd} style={{ justifyContent: 'center' }}>
+            <Ic.plus /> Aggiungi
           </button>
         </div>
-        {err && <div style={{ marginTop: 10, fontSize: 12, color: C.danger }}>{err}</div>}
-      </div>
-
-      {/* KPIs */}
-      <div className="bento-card span-3">
-        <div className="card-eyebrow">Capitale a rischio (aperte)</div>
-        <div className="kpi-value" style={{ color: C.gold }}>{fmt(totalRiskEur)}</div>
-        <div className="mono-font" style={{ fontSize: 11, color: C.textDim, marginTop: 8, lineHeight: 1.6 }}>
-          EUR: {fmtEUR2(openEur)}<br />
-          USDC: {fmtUSD(openUsd)}
-        </div>
-      </div>
-
-      <div className="bento-card span-3 accent-sage">
-        <div className="card-eyebrow">P&L realizzato</div>
-        <div className="kpi-value" style={{ color: realizedPnl >= 0 ? C.sage : C.rust }}>
-          {realizedPnl >= 0 ? '+' : ''}{fmtEUR2(realizedPnl)}
-        </div>
-        <div className="kpi-sub">{won.length} vinte · {lost.length} perse</div>
-      </div>
-
-      <div className="bento-card span-3">
-        <div className="card-eyebrow">P&L non realizzato</div>
-        <div className="kpi-value" style={{ color: unrealizedPnl >= 0 ? C.sage : C.rust }}>
-          {unrealizedPnl >= 0 ? '+' : ''}{fmtEUR2(unrealizedPnl)}
-        </div>
-        <div className="kpi-sub">mark-to-market aperte</div>
-      </div>
-
-      <div className="bento-card span-3 accent-rust">
-        <div className="card-eyebrow">Win rate</div>
-        <div className="kpi-value" style={{ color: winRate >= 50 ? C.sage : C.rust }}>{winRate.toFixed(1)}%</div>
-        <div className="kpi-sub">su {won.length + lost.length} chiuse</div>
-      </div>
-
-      {/* Positions table */}
-      <div className="bento-card span-12">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Posizioni</span></span><span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>{positions.length} totali</span></h3>
-        {positions.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: C.textMuted }}>
-            <p>Nessuna posizione. Usa il form sopra per aggiungerne una.</p>
-          </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 900 }}>
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                  {['Mercato', 'Outcome', 'Val.', 'Capitale', 'Prob. ingr', 'Prob. att', 'Δ', 'Quota', 'P&L stim', 'Scad.', 'Stato', ''].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '8px 6px', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.12em', color: C.textMuted, fontWeight: 500 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {positions.map(p => {
-                  const delta = p.currentProb - p.entryProb;
-                  const quota = (100 / Math.max(1, p.entryProb)).toFixed(2);
-                  const isOpen = p.status === 'Aperta';
-                  const pnl = isOpen
-                    ? p.capitalRisked * (delta / Math.max(1, p.entryProb))
-                    : p.status === 'Vinta' ? p.capitalRisked * ((100 - p.entryProb) / Math.max(1, p.entryProb))
-                      : p.status === 'Persa' ? -p.capitalRisked
-                        : 0;
-                  const rowBg = p.status === 'Vinta' ? 'rgba(107,142,111,0.10)'
-                    : p.status === 'Persa' ? 'rgba(197,69,69,0.10)'
-                      : (isOpen && p.currentProb > p.entryProb) ? 'var(--accent-soft)'
-                        : 'transparent';
-                  return (
-                    <tr key={p.id} className="data-row" style={{ borderBottom: `1px solid ${C.border}`, background: rowBg }}>
-                      <td style={{ padding: '8px 6px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.text }}>{p.market}</td>
-                      <td className="mono-font" style={{ padding: '8px 6px', color: C.textDim }}>{p.outcome}</td>
-                      <td className="mono-font" style={{ padding: '8px 6px', color: C.textDim }}>{p.currency}</td>
-                      <td className="mono-font" style={{ padding: '8px 6px', color: C.gold }}>{p.currency === 'USDC' ? fmtUSD(p.capitalRisked) : fmtEUR2(p.capitalRisked)}</td>
-                      <td className="mono-font" style={{ padding: '8px 6px' }}>{p.entryProb}%</td>
-                      <td style={{ padding: '4px 6px', width: 70 }}>
-                        <input type="number" className="input-cell mono-font" value={p.currentProb} onChange={e => onUpdate(p.id, 'currentProb', e.target.value)} style={{ fontSize: 12, padding: '4px 2px', textAlign: 'right' }} />
-                      </td>
-                      <td className="mono-font" style={{ padding: '8px 6px', color: delta >= 0 ? C.sage : C.rust }}>{delta >= 0 ? '+' : ''}{delta.toFixed(0)}</td>
-                      <td className="mono-font" style={{ padding: '8px 6px', color: C.textDim }}>{quota}x</td>
-                      <td className="mono-font" style={{ padding: '8px 6px', color: pnl >= 0 ? C.sage : C.rust }}>{pnl >= 0 ? '+' : ''}{p.currency === 'USDC' ? fmtUSD(pnl) : fmtEUR2(pnl)}</td>
-                      <td className="mono-font" style={{ padding: '8px 6px', color: C.textMuted, fontSize: 11 }}>{p.deadline || '—'}</td>
-                      <td style={{ padding: '4px 6px' }}>
-                        <select value={p.status} onChange={e => onClose(p.id, e.target.value)} className="input-cell" style={{ background: C.card, fontSize: 11, padding: '4px 2px' }}>
-                          <option>Aperta</option><option>Chiusa</option><option>Vinta</option><option>Persa</option>
-                        </select>
-                      </td>
-                      <td style={{ padding: '8px 6px' }}>
-                        <button onClick={() => onRemove(p.id)} style={{ background: 'none', border: 'none', color: C.danger, cursor: 'pointer', opacity: 0.6 }}><Ic.trash /></button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {err && <div className="inline-error" role="alert"><Ic.alert size={15} /><span>{err}</span></div>}
       </div>
 
       {/* Kelly panel */}
       <div className="bento-card span-6">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Kelly Criterion (posizioni aperte)</span></span></h3>
+        <h3 className="card-title"><span><span className="diamond">◆</span><span>Kelly Criterion (posizioni aperte)</span></span></h3>
         {open.length === 0 ? (
           <div style={{ color: C.textMuted, fontSize: 12, padding: 20, textAlign: 'center' }}>Nessuna posizione aperta.</div>
         ) : (
@@ -1752,17 +2123,17 @@ function MarketsTab({ markets, onAdd, onUpdate, onRemove, onClose, onUpdateRate 
       </div>
 
       {/* P&L chart */}
-      <div className="bento-card span-6">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>P&L realizzato cumulativo</span></span></h3>
+      <div className="bento-card span-6 chart-card">
+        <h3 className="card-title"><span><span className="diamond">◆</span><span>P&L realizzato cumulativo</span></span></h3>
         {(!markets.pnlHistory || markets.pnlHistory.length === 0) ? (
-          <div style={{ padding: 40, textAlign: 'center', color: C.textMuted, fontSize: 12 }}>Chiudi le prime posizioni per vedere il grafico.</div>
+          <div style={{ padding: '32px 12px', textAlign: 'center', color: C.textMuted, fontSize: 12 }}>Chiudi le prime posizioni per vedere il grafico.</div>
         ) : (
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={markets.pnlHistory}>
+          <ResponsiveContainer width="100%" height={scale.h(240, 190)}>
+            <LineChart data={markets.pnlHistory} margin={scale.margin}>
               <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
-              <XAxis dataKey="date" stroke={C.textMuted} tick={{ fontSize: 11 }} />
-              <YAxis stroke={C.textMuted} tick={{ fontSize: 11 }} />
-              <Tooltip {...ttStyle} formatter={(v) => fmtEUR2(v)} />
+              <XAxis dataKey="date" {...scale.axis} minTickGap={scale.minTickGap} />
+              <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick} />
+              <Tooltip {...TT_LINE} formatter={(v) => fmtEUR2(v)} />
               <Line type="monotone" dataKey="pnl" stroke={C.gold} strokeWidth={2.5} dot={{ r: 4, fill: C.gold }} />
             </LineChart>
           </ResponsiveContainer>
@@ -1776,10 +2147,10 @@ function MarketsTab({ markets, onAdd, onUpdate, onRemove, onClose, onUpdateRate 
       <div className="bento-card span-12">
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
           <div>
-            <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Tasso EUR/USD</label>
-            <input type="number" step="0.0001" className="input-cell mono-font" value={markets.eurUsdRate} onChange={e => onUpdateRate(e.target.value)} style={{ width: 160, textAlign: 'right' }} />
+            <label style={labelStyle}>Tasso EUR/USD</label>
+            <input type="number" step="0.0001" inputMode="decimal" className="input-cell mono-font" value={markets.eurUsdRate} onChange={e => onUpdateRate(e.target.value)} style={{ width: 160, textAlign: 'right' }} />
           </div>
-          <div style={{ fontSize: 11, color: C.textMuted, flex: 1, minWidth: 220 }}>
+          <div style={{ fontSize: 11, color: C.textMuted, flex: 1, minWidth: 'min(100%, 220px)' }}>
             Usato per convertire le posizioni USDC in EUR nei KPI. 1 EUR = {Number(markets.eurUsdRate).toFixed(4)} USD.
           </div>
         </div>
@@ -1822,26 +2193,6 @@ function TypeBadge({ type }) {
 }
 function StatusBadge({ status }) {
   return <span className={`badge ${STATUS_BADGE[status] || 'badge-neutral'}`}>{status || '—'}</span>;
-}
-
-function SummaryCard({ label, value, hint, trend, accent, invertTrend }) {
-  const has = trend !== null && trend !== undefined && isFinite(trend);
-  const positive = invertTrend ? trend < 0 : trend > 0;
-  const TrendIc = trend >= 0 ? Ic.up : Ic.down;
-  return (
-    <div className={`bento-card span-3 ${accent || ''}`}>
-      <div className="card-eyebrow" style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.14em', textTransform: 'uppercase' }}>{label}</div>
-      <div className="display-font number-display" style={{ fontSize: 30, marginTop: 8, lineHeight: 1.1 }}>{value}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-        {has && trend !== 0 && (
-          <span className="mono-font" style={{ fontSize: 11, color: positive ? C.sage : C.rust, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-            <TrendIc /> {fmtPct(Math.abs(trend))}
-          </span>
-        )}
-        {hint && <span style={{ fontSize: 11, color: C.textMuted }}>{hint}</span>}
-      </div>
-    </div>
-  );
 }
 
 function TransactionFilters({ filters, onChange, onReset }) {
@@ -1990,26 +2341,27 @@ function TransactionTable({ rows, sort, onSort, onEdit, onDelete, selectedIds, o
               <article key={t.id} className={`tx-row ${sel.has(t.id) ? 'selected' : ''}`}>
                 <input type="checkbox" className="tx-row-check" checked={sel.has(t.id)}
                   onChange={() => onToggleRow && onToggleRow(t.id)} aria-label={`Seleziona ${t.description || 'movimento'}`} />
-                <div className="tx-row-main">
-                  <div className="tx-row-desc">{t.description || '—'}</div>
-                  {/* Una riga sola di contorno. Prima erano tre badge più il
-                      metodo più la nota: cinque righe di metadati attorno a un
-                      importo scritto più piccolo di tutti loro. */}
-                  <div className="tx-row-sub">
-                    <span className="tx-row-day">{(t.date || '').split('-')[2]} {(MESI_IT[parseInt((t.date || '').split('-')[1], 10) - 1] || '').slice(0, 3)}</span>
-                    <CategoryBadge category={t.category} />
-                    {/* Lo stato compare solo quando dice qualcosa: "Completato" è il caso normale */}
-                    {t.status && t.status !== 'Completato' && <StatusBadge status={t.status} />}
-                    {t.paymentMethod && <span className="tx-row-method">{t.paymentMethod}</span>}
-                  </div>
-                </div>
-                <div className="tx-row-right">
-                  <AmountDisplay amount={t.amount} type={t.type} size={17} />
-                  <div className="tx-row-actions">
-                    <button className="tx-action-btn" aria-label={`Modifica ${t.description || 'movimento'}`} onClick={() => onEdit(t)}><Ic.edit /></button>
-                    <button className="tx-action-btn danger" aria-label={`Elimina ${t.description || 'movimento'}`} onClick={() => onDelete(t)}><Ic.trash /></button>
-                  </div>
-                </div>
+                {/* Si tocca la riga per modificarla, ed "Elimina" sta nella
+                    scheda di modifica. Prima ✎ e 🗑 si prendevano 90px a
+                    destra e i badge restavano troncati ("Ta…", "In sos…"). */}
+                <button type="button" className="tx-row-open" onClick={() => onEdit(t)} title="Modifica movimento">
+                  <span className="tx-row-main">
+                    <span className="tx-row-desc">{t.description || '—'}</span>
+                    {/* Una riga sola di contorno. Prima erano tre badge più il
+                        metodo più la nota: cinque righe di metadati attorno a un
+                        importo scritto più piccolo di tutti loro. */}
+                    <span className="tx-row-sub">
+                      <span className="tx-row-day">{(t.date || '').split('-')[2]} {(MESI_IT[parseInt((t.date || '').split('-')[1], 10) - 1] || '').slice(0, 3)}</span>
+                      <CategoryBadge category={t.category} />
+                      {/* Lo stato compare solo quando dice qualcosa: "Completato" è il caso normale */}
+                      {t.status && t.status !== 'Completato' && <StatusBadge status={t.status} />}
+                      {t.paymentMethod && <span className="tx-row-method">{t.paymentMethod}</span>}
+                    </span>
+                  </span>
+                  <span className="tx-row-right">
+                    <AmountDisplay amount={t.amount} type={t.type} size={17} />
+                  </span>
+                </button>
               </article>
             ))}
           </React.Fragment>
@@ -2019,7 +2371,7 @@ function TransactionTable({ rows, sort, onSort, onEdit, onDelete, selectedIds, o
   );
 }
 
-function TransactionModal({ initial, onSave, onClose }) {
+function TransactionModal({ initial, onSave, onClose, onDelete }) {
   const seed = initial || { type: 'expense', amount: '', date: todayISO(), category: EXPENSE_CATEGORIES[0], description: '', paymentMethod: PAYMENT_METHODS[0], status: 'Completato', notes: '' };
   const [form, setForm] = useState(seed);
   const [err, setErr] = useState('');
@@ -2063,7 +2415,7 @@ function TransactionModal({ initial, onSave, onClose }) {
 
   return (
     <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <form className="modal-card" onSubmit={submit}>
+      <form className="modal-card" onSubmit={submit} role="dialog" aria-modal="true" aria-label={editing ? 'Modifica movimento' : 'Nuovo movimento'}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
           <h3 className="display-font" style={{ margin: 0, fontSize: 20, fontStyle: 'italic' }}>{editing ? 'Modifica movimento' : 'Nuovo movimento'}</h3>
           <button type="button" className="tx-action-btn" onClick={onClose} aria-label="Chiudi"><Ic.x /></button>
@@ -2119,7 +2471,12 @@ function TransactionModal({ initial, onSave, onClose }) {
 
         {err && <div style={{ color: C.danger, fontSize: 12, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}><Ic.alert size={14} /> {err}</div>}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 6 }}>
+        {/* Sul telefono la barra delle azioni resta ancorata in fondo al
+            foglio: prima il pulsante di salvataggio stava sotto la tastiera */}
+        <div className="modal-actions">
+          {editing && onDelete && (
+            <button type="button" className="btn-danger modal-delete" onClick={onDelete} aria-label="Elimina movimento"><Ic.trash /><span className="modal-delete-label">Elimina</span></button>
+          )}
           <button type="button" className="btn-ghost" onClick={onClose}>Annulla</button>
           <button type="submit" className="btn-primary"><Ic.check /> {editing ? 'Salva modifiche' : 'Aggiungi movimento'}</button>
         </div>
@@ -2130,11 +2487,10 @@ function TransactionModal({ initial, onSave, onClose }) {
 
 function ImportStatementModal({ existing, onImport, onClose }) {
   const [stage, setStage] = useState('pick'); // pick | loading | review
-  const [loadingMsg, setLoadingMsg] = useState('');
+  const [loading, setLoading] = useState({ msg: '', pct: null });
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState('');
   const [dragging, setDragging] = useState(false);
-  const fileRef = useRef(null);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -2144,14 +2500,14 @@ function ImportStatementModal({ existing, onImport, onClose }) {
 
   const handleFile = async (file) => {
     if (!file) return;
-    setErr(''); setStage('loading'); setLoadingMsg('Lettura del file…');
+    setErr(''); setStage('loading'); setLoading({ msg: 'Leggo il file…', pct: null });
     try {
       const name = (file.name || '').toLowerCase();
       let parsed = [];
       if (name.endsWith('.csv') || file.type === 'text/csv' || file.type === 'application/vnd.ms-excel') {
         parsed = parseStatementCSV(await file.text());
       } else {
-        const text = await extractTextFromFile(file, (m) => setLoadingMsg(m));
+        const text = await extractTextFromFile(file, (msg, pct) => setLoading({ msg, pct: pct === undefined ? null : pct }));
         parsed = parseStatementText(text);
         if (!parsed.length) parsed = parseStatementCSV(text);
       }
@@ -2162,10 +2518,12 @@ function ImportStatementModal({ existing, onImport, onClose }) {
       });
       setRows(prepared); setStage('review');
     } catch (e) {
-      setErr('Errore nella lettura del file: ' + (e && e.message ? e.message : e)); setStage('pick');
+      console.error(e);
+      setErr(describeImportError(e)); setStage('pick');
     }
   };
 
+  const onPick = (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) handleFile(f); };
   const onDrop = (e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (f) handleFile(f); };
   const setRow = (id, k, v) => setRows(rs => rs.map(r => r._id === id ? { ...r, [k]: v } : r));
   const setRowType = (id, type) => setRows(rs => rs.map(r => r._id === id ? { ...r, type, category: guessTxCategory(r.description, type) } : r));
@@ -2188,35 +2546,39 @@ function ImportStatementModal({ existing, onImport, onClose }) {
 
   return (
     <div className="modal-overlay" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={`modal-card ${stage === 'review' ? 'modal-card-wide' : ''}`}>
+      <div className={`modal-card ${stage === 'review' ? 'modal-card-wide' : ''}`} role="dialog" aria-modal="true" aria-label="Importa estratto conto">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 className="display-font" style={{ margin: 0, fontSize: 20, fontStyle: 'italic' }}>Importa estratto conto</h3>
+          <h3 className="display-font" style={{ margin: 0, fontSize: 20 }}>Importa estratto conto</h3>
           <button type="button" className="tx-action-btn" onClick={onClose} aria-label="Chiudi"><Ic.x /></button>
         </div>
 
         {stage === 'pick' && (
-          <div>
-            <div className={`dropzone ${dragging ? 'dragging' : ''}`}
-              onClick={() => fileRef.current && fileRef.current.click()}
+          <div style={{ paddingBottom: 16 }}>
+            <input id="statement-file" className="file-input" type="file" accept=".csv,text/csv,application/pdf,image/*" onChange={onPick} />
+            <label htmlFor="statement-file" className={`dropzone ${dragging ? 'dragging' : ''}`}
               onDragOver={e => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
               onDrop={onDrop}>
-              <div style={{ marginBottom: 8 }}><Ic.upload size={22} /></div>
-              <div style={{ fontSize: 13, marginBottom: 4 }}>Trascina qui il file oppure clicca per selezionarlo</div>
-              <div style={{ fontSize: 11, color: C.textMuted }}>CSV esportato dalla banca · PDF dell'estratto conto (testo selezionabile)</div>
-              <input ref={fileRef} type="file" accept=".csv,text/csv,application/pdf,image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files && e.target.files[0]; if (f) handleFile(f); e.target.value = ''; }} />
-            </div>
+              <span className="dropzone-icon"><Ic.upload size={22} /></span>
+              <span className="dropzone-title only-fine">Trascina qui il file oppure clicca per selezionarlo</span>
+              <span className="dropzone-title only-coarse">Tocca per scegliere il file</span>
+              <span className="dropzone-hint">CSV esportato dalla banca · PDF dell'estratto conto (testo selezionabile)</span>
+            </label>
             <p style={{ fontSize: 11, color: C.textMuted, marginTop: 12, lineHeight: 1.5 }}>
               I movimenti riconosciuti verranno mostrati in anteprima: potrai correggere data, descrizione, tipo, categoria e importo prima di confermare. I duplicati (stessa data, importo e descrizione) sono segnalati e pre-deselezionati.
             </p>
-            {err && <div style={{ color: C.danger, fontSize: 12, marginTop: 12, display: 'flex', alignItems: 'center', gap: 6 }}><Ic.alert size={14} /> {err}</div>}
+            {err && <div className="inline-error" role="alert"><Ic.alert size={15} /><span>{err}</span></div>}
           </div>
         )}
 
         {stage === 'loading' && (
-          <div style={{ padding: '32px 8px', textAlign: 'center', color: C.textDim, fontSize: 13 }}>
-            <div className="mono-font" style={{ color: C.gold, marginBottom: 8 }}>● ● ●</div>
-            {loadingMsg || 'Analisi in corso…'}
+          <div className="dropzone busy" role="status" aria-live="polite" style={{ marginBottom: 16 }}>
+            <span className="dropzone-progress">
+              <span className="dropzone-msg">{loading.msg || 'Analisi in corso…'}</span>
+              <span className={`progress-track ${loading.pct === null ? 'indeterminate' : ''}`} style={{ display: 'block' }}>
+                <span className="progress-fill" style={{ display: 'block', '--fill': loading.pct === null ? 0.35 : loading.pct, background: C.gold }} />
+              </span>
+            </span>
           </div>
         )}
 
@@ -2226,9 +2588,12 @@ function ImportStatementModal({ existing, onImport, onClose }) {
               <div className="mono-font" style={{ fontSize: 12, color: C.textDim }}>
                 {selected.length}/{rows.length} selezionati · <span style={{ color: C.sage }}>Entrate {fmt(selIncome)}</span> · <span style={{ color: C.rust }}>Uscite {fmt(selExpense)}</span>
               </div>
-              <button type="button" className="btn-ghost" onClick={() => { setStage('pick'); setRows([]); setErr(''); }} style={{ padding: '6px 12px' }}>Cambia file</button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="btn-ghost phone-only" onClick={toggleAll} style={{ padding: '6px 12px' }}>{allChecked ? 'Deseleziona tutti' : 'Seleziona tutti'}</button>
+                <button type="button" className="btn-ghost" onClick={() => { setStage('pick'); setRows([]); setErr(''); }} style={{ padding: '6px 12px' }}>Cambia file</button>
+              </div>
             </div>
-            <div style={{ overflowX: 'auto', maxHeight: '52vh', overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
+            <div className="desktop-table" style={{ overflowX: 'auto', maxHeight: '52vh', overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
               <table className="imp-table">
                 <thead>
                   <tr>
@@ -2266,8 +2631,35 @@ function ImportStatementModal({ existing, onImport, onClose }) {
                 </tbody>
               </table>
             </div>
-            {err && <div style={{ color: C.danger, fontSize: 12, marginTop: 12, display: 'flex', alignItems: 'center', gap: 6 }}><Ic.alert size={14} /> {err}</div>}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 14 }}>
+            {/* Telefono: una scheda per movimento. Prima era la stessa tabella
+                larga 720px, da correggere scorrendo di lato dentro un modale. */}
+            <div className="phone-list">
+              {rows.map(r => {
+                const cats = r.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+                return (
+                  <div key={r._id} className={`imp-card ${r._checked ? '' : 'off'}`}>
+                    <div className="imp-card-top">
+                      <input type="checkbox" className="tx-row-check" checked={r._checked} onChange={() => setRow(r._id, '_checked', !r._checked)} aria-label={`Importa ${r.description}`} />
+                      <input type="date" className="input-cell" value={r.date} onChange={e => setRow(r._id, 'date', e.target.value)} aria-label="Data" />
+                      <input type="number" inputMode="decimal" min="0.01" step="0.01" className="input-cell" value={r.amount} onChange={e => setRow(r._id, 'amount', e.target.value)} aria-label="Importo in euro" style={{ textAlign: 'right' }} />
+                    </div>
+                    <input type="text" className="input-cell" value={r.description} onChange={e => setRow(r._id, 'description', e.target.value)} aria-label="Descrizione" />
+                    <div className="imp-card-selects">
+                      <select className="input-cell" value={r.type} onChange={e => setRowType(r._id, e.target.value)} style={{ background: C.card }} aria-label="Tipo">
+                        <option value="income">Entrata</option>
+                        <option value="expense">Uscita</option>
+                      </select>
+                      <select className="input-cell" value={r.category} onChange={e => setRow(r._id, 'category', e.target.value)} style={{ background: C.card }} aria-label="Categoria">
+                        {cats.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                    {r._dup && <div className="imp-dup">Già presente nel registro: resta escluso finché non lo selezioni.</div>}
+                  </div>
+                );
+              })}
+            </div>
+            {err && <div className="inline-error" role="alert"><Ic.alert size={15} /><span>{err}</span></div>}
+            <div className="modal-actions">
               <button type="button" className="btn-ghost" onClick={onClose}>Annulla</button>
               <button type="button" className="btn-primary" onClick={doImport}><Ic.check /> Importa {selected.length} {selected.length === 1 ? 'movimento' : 'movimenti'}</button>
             </div>
@@ -2336,7 +2728,9 @@ function TransactionsTab({ data, onAdd, onUpdate, onDelete, onImport, onBulkDele
   const onSort = (key) => setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'date' || key === 'amount' ? 'desc' : 'asc' });
 
   const handleDelete = (t) => {
-    if (window.confirm(`Eliminare il movimento "${t.description}" del ${itDateLabel(t.date)}?`)) onDelete(t.id);
+    if (!window.confirm(`Eliminare il movimento "${t.description}" del ${itDateLabel(t.date)}?`)) return false;
+    onDelete(t.id);
+    return true;
   };
   const handleSave = (payload) => {
     if (modal && modal.kind === 'edit') onUpdate(modal.tx.id, payload); else onAdd(payload);
@@ -2345,52 +2739,64 @@ function TransactionsTab({ data, onAdd, onUpdate, onDelete, onImport, onBulkDele
 
   return (
     <div className="bento">
-      {/* Header */}
-      <div className="bento-card span-12" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-        <div>
-          <h3 className="display-font" style={{ margin: 0, fontSize: 22, fontWeight: 400 }}>
-            <span style={{ color: C.gold, marginRight: 8 }}>◆</span><span style={{ fontStyle: 'italic' }}>Entrate &amp; Uscite</span>
-          </h3>
-          <p style={{ margin: '8px 0 0', color: C.textDim, fontSize: 13, maxWidth: 560 }}>
-            Registro di tutti i flussi di denaro in entrata e in uscita: traccia, filtra e analizza ogni movimento.
-          </p>
-        </div>
-        {/* Sul telefono l'azione principale vive nel pulsante flottante in
-            basso, a portata di pollice, e qui sparisce per non duplicarsi */}
-        <div className="tx-head-actions" style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button className="btn-ghost" onClick={() => setModal({ kind: 'import' })} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Ic.upload /> Importa estratto conto</button>
-          <button className="btn-primary" onClick={() => setModal({ kind: 'add' })}><Ic.plus /> Aggiungi movimento</button>
-        </div>
-      </div>
+      {/* ── Hero: il saldo, e accanto il mese in corso ──
+          Prima un'intestazione testuale e quattro schede identiche, con il
+          saldo grande quanto il tasso di risparmio. */}
+      <PageHero label="Saldo netto" value={overall.netBalance}
+        tone={overall.netBalance >= 0 ? C.sage : C.rust}
+        meta={<>
+          {curKey && <span>{itMonthLabel(curKey)}: <strong style={{ color: cur.net >= 0 ? C.sage : C.rust }}>{cur.net >= 0 ? '+' : '−'}{fmt(Math.abs(cur.net))}</strong></span>}
+          <TrendTag trend={pctChange(cur.net, prev ? prev.net : null)} />
+          <span>{all.length} movimenti registrati</span>
+        </>}
+        aside={curKey ? (
+          <PartBars title={`Il mese · ${itMonthLabel(curKey)}`} total={Math.max(cur.income, cur.expenses)} parts={[
+            { name: 'Entrate', value: cur.income, color: C.sage, share: '' },
+            { name: 'Uscite', value: cur.expenses, color: C.rust, share: cur.income > 0 ? `${fmtPct(cur.expenses / cur.income)} delle entrate` : '' }
+          ]} />
+        ) : null}
+        footClass="desktop-only"
+        foot={<>
+          <p className="hero-note">Registro di tutti i flussi di denaro in entrata e in uscita: traccia, filtra e analizza ogni movimento.</p>
+          {/* Sul telefono l'azione principale vive nel pulsante flottante in
+              basso, a portata di pollice; l'importazione sta accanto ai filtri */}
+          <div className="tx-head-actions">
+            <button className="btn-ghost" onClick={() => setModal({ kind: 'import' })} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Ic.upload /> Importa estratto conto</button>
+            <button className="btn-primary" onClick={() => setModal({ kind: 'add' })}><Ic.plus /> Aggiungi movimento</button>
+          </div>
+        </>} />
 
-      {/* Summary cards */}
-      <SummaryCard label="Entrate totali" accent="accent-sage"
-        value={fmt(overall.totalIncome)}
-        trend={pctChange(cur.income, prev ? prev.income : null)}
-        hint={curKey ? `${itMonthLabel(curKey)}: ${fmt(cur.income)}` : 'nessun dato'} />
-      <SummaryCard label="Uscite totali" accent="accent-rust"
-        value={fmt(overall.totalExpenses)}
-        trend={pctChange(cur.expenses, prev ? prev.expenses : null)} invertTrend
-        hint={curKey ? `${itMonthLabel(curKey)}: ${fmt(cur.expenses)}` : 'nessun dato'} />
-      <SummaryCard label="Saldo netto"
-        value={<span style={{ color: overall.netBalance >= 0 ? C.sage : C.rust }}>{fmt(overall.netBalance)}</span>}
-        trend={pctChange(cur.net, prev ? prev.net : null)}
-        hint={`${all.length} movimenti registrati`} />
-      <SummaryCard label="Tasso di risparmio (mese)"
-        value={fmtPct(curRate)}
-        trend={prevRate !== null ? (curRate - prevRate) : null}
-        hint={prevRate !== null ? `${itMonthLabel(prevKey)}: ${fmtPct(prevRate)}` : (curKey ? itMonthLabel(curKey) : 'nessun dato')} />
+      <StatStrip items={[
+        {
+          label: 'Entrate totali', value: fmt(overall.totalIncome), color: C.sage,
+          hint: <><TrendTag trend={pctChange(cur.income, prev ? prev.income : null)} />{curKey ? `${itMonthLabel(curKey)}: ${fmt(cur.income)}` : 'nessun dato'}</>
+        },
+        {
+          label: 'Uscite totali', value: fmt(overall.totalExpenses), color: C.rust,
+          hint: <><TrendTag trend={pctChange(cur.expenses, prev ? prev.expenses : null)} invert />{curKey ? `${itMonthLabel(curKey)}: ${fmt(cur.expenses)}` : 'nessun dato'}</>
+        },
+        {
+          label: 'Tasso di risparmio (mese)', value: fmtPct(curRate),
+          color: curRate >= 0.2 ? C.sage : curRate >= 0.1 ? C.gold : C.rust,
+          hint: <><TrendTag trend={prevRate !== null ? (curRate - prevRate) : null} />{prevRate !== null ? `${itMonthLabel(prevKey)}: ${fmtPct(prevRate)}` : (curKey ? itMonthLabel(curKey) : 'nessun dato')}</>
+        }
+      ]} />
 
       {/* Filtri: aperti sul desktop, dietro un chip sul telefono — cinque
           campi a tutta larghezza rubavano una schermata intera prima di
           arrivare ai movimenti */}
       <div className="bento-card span-12 tx-filter-card">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Filtri</span></span></h3>
+        <h3 className="card-title"><span><span className="diamond">◆</span><span>Filtri</span></span></h3>
         <TransactionFilters filters={filters} onChange={setFilters} onReset={() => setFilters(emptyFilters)} />
       </div>
+      {/* Sul telefono "Importa estratto conto" era nascosto insieme alle azioni
+          dell'intestazione, e non c'era altro modo di raggiungerlo */}
       <div className="tx-filter-chip-wrap span-12">
-        <button className="month-chip" onClick={() => setFilterSheet(true)} aria-haspopup="dialog" style={{ width: '100%', justifyContent: 'center' }}>
+        <button className="month-chip" onClick={() => setFilterSheet(true)} aria-haspopup="dialog">
           <Ic.search /> Filtri{activeFilterCount ? ` · ${activeFilterCount}` : ''}
+        </button>
+        <button className="month-chip" onClick={() => setModal({ kind: 'import' })} aria-haspopup="dialog">
+          <Ic.upload /> Importa
         </button>
       </div>
       {filterSheet && (
@@ -2407,7 +2813,7 @@ function TransactionsTab({ data, onAdd, onUpdate, onDelete, onImport, onBulkDele
       {/* Table */}
       <div className="bento-card span-12">
         <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
-          <span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Movimenti</span></span>
+          <span><span className="diamond">◆</span><span>Movimenti</span></span>
           <span className="mono-font" style={{ fontSize: 12, color: C.textDim }}>
             {sorted.length} {sorted.length === 1 ? 'voce' : 'voci'} · <span style={{ color: C.sage }}>Entrate {fmt(filteredTotals.totalIncome)}</span> · <span style={{ color: C.rust }}>Uscite {fmt(filteredTotals.totalExpenses)}</span> · Saldo {fmt(filteredTotals.netBalance)}
           </span>
@@ -2426,7 +2832,8 @@ function TransactionsTab({ data, onAdd, onUpdate, onDelete, onImport, onBulkDele
       </div>
 
       {modal && (modal.kind === 'add' || modal.kind === 'edit') && (
-        <TransactionModal key={modal.kind === 'edit' ? modal.tx.id : 'new'} initial={modal.kind === 'edit' ? modal.tx : null} onSave={handleSave} onClose={() => setModal(null)} />
+        <TransactionModal key={modal.kind === 'edit' ? modal.tx.id : 'new'} initial={modal.kind === 'edit' ? modal.tx : null} onSave={handleSave} onClose={() => setModal(null)}
+          onDelete={modal.kind === 'edit' ? () => { if (handleDelete(modal.tx)) setModal(null); } : undefined} />
       )}
       {modal && modal.kind === 'import' && (
         <ImportStatementModal existing={all} onImport={(list) => { onImport(list); setModal(null); }} onClose={() => setModal(null)} />
@@ -2617,11 +3024,29 @@ function FinanceDashboard() {
     setData(prev => ({ ...prev, markets: { ...prev.markets, eurUsdRate: Number(rate) || 1 } }));
   }, []);
 
-  const exportJSON = useCallback(() => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `budget_${data.profile.month.replace(/\s/g, '_')}.json`; a.click();
-    URL.revokeObjectURL(url);
+  /* Sull'app installata su iPhone un download da blob apre un'anteprima senza
+     via d'uscita: il foglio di condivisione invece offre "Salva su File".
+     Altrove resta il download, con il link agganciato alla pagina (Firefox lo
+     ignora se è staccato) e l'URL revocato dopo, non nello stesso istante. */
+  const exportJSON = useCallback(async () => {
+    const name = `budget_${data.profile.month.replace(/\s/g, '_')}.json`;
+    const json = JSON.stringify(data, null, 2);
+    try {
+      const touch = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+      const file = new File([json], name, { type: 'application/json' });
+      if (touch && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: name });
+        showToast('Backup pronto: salvalo in File');
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+    }
+    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
     showToast('Dati esportati con successo');
   }, [data, showToast]);
 
@@ -2714,27 +3139,37 @@ function FinanceDashboard() {
     { name: 'Risparmio', value: Math.max(0, totals.monthlySaving), fill: RETAINED }
   ];
 
-  const ttStyle = { contentStyle: { background: C.bg, border: `1px solid ${C.gold}`, fontFamily: 'var(--font-number)', fontSize: 12, color: C.text, borderRadius: 4 }, itemStyle: { color: C.textDim }, labelStyle: { color: C.gold } };
-
   const latestHistory = data.history && data.history.length > 0 ? data.history[data.history.length - 1] : null;
   const netTrend = latestHistory ? (totals.netWorth - latestHistory.netWorth) : 0;
   const netTrendPct = latestHistory && latestHistory.netWorth > 0 ? netTrend / latestHistory.netWorth : 0;
 
-  /* Il patrimonio sale all'ingresso; la sparkline usa lo storico reale più il
-     valore di adesso, così l'ultimo punto è sempre il presente. */
-  const heroNetWorth = useCountUp(totals.netWorth);
+  /* La sparkline usa lo storico reale più il valore di adesso, così l'ultimo
+     punto è sempre il presente. */
   const sparkPoints = useMemo(() => {
     const hist = (data.history || []).map(h => h.netWorth);
     return [...hist, totals.netWorth];
   }, [data.history, totals.netWorth]);
   const savingColor = totals.savingRate >= 0.2 ? C.sage : totals.savingRate >= 0.1 ? C.gold : C.rust;
   const activeTabLabel = (tabs.find(t => t.id === activeTab) || {}).label || 'Quadro';
-  const narrow = useIsNarrow();
-  const chartH = (desktop, mobile) => (narrow ? mobile : desktop);
+  const scale = useChartScale();
+  const narrow = scale.narrow;
+  const chartH = scale.h;
+
+  /* Composizione del patrimonio: la liquidità in grigio, le posizioni sulla
+     rampa. Prima i colori andavano per indice e oltre sei voci finivano. */
+  const composition = useMemo(() => {
+    const rows = [{ name: 'Liquidita', value: Number(data.liquidity.current) || 0, color: C.textDim }];
+    data.investments.forEach((i, k) => rows.push({ name: i.label, value: Number(i.current) || 0, color: OUTFLOW[k % OUTFLOW.length] }));
+    return rows.filter(d => d.value > 0);
+  }, [data.liquidity, data.investments]);
 
   return (
     <div className="app-shell">
       <Toast message={toast} />
+      {/* Fuori dalla barra desktop, che sul telefono è display:none, e con
+          l'estensione oltre al tipo: su iPhone con il solo "application/json"
+          il selettore poteva lasciare i backup in grigio */}
+      <input ref={fileInputRef} className="file-input" type="file" accept=".json,application/json" onChange={importJSON} tabIndex={-1} aria-hidden="true" />
       <Sidebar tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
       <MobileNav tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
@@ -2757,7 +3192,9 @@ function FinanceDashboard() {
         {/* ── Top bar (desktop) ── */}
         <header className="topbar">
           <div className="topbar-title">
-            <h1><span style={{ fontStyle: 'italic' }}>Il tuo</span> Quadro</h1>
+            {/* Il titolo segue la sezione: prima diceva "Il tuo Quadro" anche
+                dentro Mutui o Cedolini */}
+            <h1>{activeTab === 'overview' ? <><span>Il tuo</span> Quadro</> : activeTabLabel}</h1>
             <div className="topbar-meta">
               <input type="text" value={data.profile.name} onChange={e => setData(p => ({ ...p, profile: { ...p.profile, name: e.target.value } }))} className="input-label" style={{ width: 120, borderBottom: `1px dotted ${C.border}` }} aria-label="Nome" />
               <span style={{ color: C.textMuted }}>·</span>
@@ -2773,9 +3210,6 @@ function FinanceDashboard() {
             <button className="icon-btn" onClick={() => setActionSheet(true)} aria-label="Altre azioni" aria-haspopup="dialog" style={{ minWidth: 40, justifyContent: 'center' }}>
               <Ic.more size={16} />
             </button>
-            <label style={{ display: 'none' }}>
-              <input ref={fileInputRef} type="file" accept="application/json" onChange={importJSON} />
-            </label>
           </div>
         </header>
 
@@ -2790,7 +3224,7 @@ function FinanceDashboard() {
             <button className="sheet-row" onClick={() => { setActionSheet(false); exportJSON(); }}>
               <Ic.download size={18} /><span>Esporta dati (JSON)</span>
             </button>
-            <button className="sheet-row" onClick={() => { setActionSheet(false); fileInputRef.current?.click(); }}>
+            <button className="sheet-row" onClick={() => { fileInputRef.current?.click(); setActionSheet(false); }}>
               <Ic.upload size={18} /><span>Importa dati (JSON)</span>
             </button>
             <button className="sheet-row" onClick={() => { setActionSheet(false); toggleTheme(); }}>
@@ -2831,37 +3265,23 @@ function FinanceDashboard() {
               {/* ── Hero: il patrimonio netto, e null'altro alla sua scala ──
                   Prima cinque schede identiche si contendevano l'attenzione e
                   il numero che conta era grande quanto gli altri. */}
-              <section className="card-hero reveal">
-                <div className="hero-grid">
-                  <div>
-                    <div className="hero-label">Patrimonio netto</div>
-                    <div className="hero-value">{fmt(heroNetWorth)}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 16 }}>
-                      {latestHistory ? (
-                        <>
-                          <span className={`hero-delta ${netTrend >= 0 ? 'up' : 'down'}`}>
-                            {netTrend >= 0 ? <Ic.up /> : <Ic.down />}
-                            {fmt(Math.abs(netTrend))} ({fmtPct(Math.abs(netTrendPct))})
-                          </span>
-                          <span style={{ fontSize: 12, color: C.textMuted }}>rispetto a {latestHistory.date}</span>
-                        </>
-                      ) : (
-                        <span style={{ fontSize: 12, color: C.textMuted }}>
-                          Liquidita {fmt(data.liquidity.current)} + Investimenti {fmt(totals.totalInvestCurrent)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* L'affianco porta sempre un dato vero: l'andamento quando
-                      c'è storico, altrimenti da cosa è fatto il patrimonio.
-                      Mai un riquadro pieno d'aria. */}
-                  <div className="hero-aside">
+              <PageHero label="Patrimonio netto" value={totals.netWorth}
+                meta={latestHistory ? (
+                  <>
+                    <HeroDelta up={netTrend >= 0}>{fmt(Math.abs(netTrend))} ({fmtPct(Math.abs(netTrendPct))})</HeroDelta>
+                    <span>rispetto a {itMonthLabel(latestHistory.date)}</span>
+                  </>
+                ) : (
+                  <span>Liquidita {fmt(data.liquidity.current)} + Investimenti {fmt(totals.totalInvestCurrent)}</span>
+                )}
+                aside={(
+                  <>
+                    {/* L'affianco porta sempre un dato vero: l'andamento quando
+                        c'è storico, altrimenti da cosa è fatto il patrimonio.
+                        Mai un riquadro pieno d'aria. */}
                     {sparkPoints.length >= 2 && (
                       <div>
-                        <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: C.textMuted, marginBottom: 8 }}>
-                          Andamento · {sparkPoints.length} rilevazioni
-                        </div>
+                        <div className="aside-label" style={{ marginBottom: 8 }}>Andamento · {sparkPoints.length} rilevazioni</div>
                         <Sparkline points={sparkPoints} color={C.gold} />
                       </div>
                     )}
@@ -2869,26 +3289,10 @@ function FinanceDashboard() {
                       {/* "Da cosa è fatto" e non "Composizione": più in basso
                           c'è già una scheda con quel titolo, e due etichette
                           uguali nella stessa schermata si leggono male */}
-                      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: C.textMuted, marginBottom: 12 }}>
-                        Da cosa è fatto
-                      </div>
-                      {[
+                      <PartBars title="Da cosa è fatto" total={totals.netWorth} parts={[
                         { name: 'Liquidita', value: data.liquidity.current, color: C.textDim },
                         { name: 'Investimenti', value: totals.totalInvestCurrent, color: C.gold }
-                      ].map(part => (
-                        <div key={part.name} style={{ marginBottom: 12 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, marginBottom: 5 }}>
-                            <span style={{ fontSize: 12.5, color: C.textDim }}>{part.name}</span>
-                            <span className="mono-font" style={{ fontSize: 12.5, color: C.text }}>
-                              {fmt(part.value)}
-                              <span style={{ color: C.textMuted, marginLeft: 8 }}>{fmtPct(part.value / Math.max(1, totals.netWorth))}</span>
-                            </span>
-                          </div>
-                          <div className="progress-track" style={{ height: 5 }}>
-                            <div className="progress-fill" style={{ '--fill': (Math.min(100, (part.value / Math.max(1, totals.netWorth)) * 100)) / 100, background: part.color }} />
-                          </div>
-                        </div>
-                      ))}
+                      ]} />
                       {/* Il suggerimento è utile ma non vale due righe di
                           altezza sulla prima schermata del telefono */}
                       {sparkPoints.length < 2 && !narrow && (
@@ -2897,27 +3301,27 @@ function FinanceDashboard() {
                         </div>
                       )}
                     </div>
-                  </div>
-                </div>
-
-                <div className="hero-foot">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <SavingArc rate={totals.savingRate} />
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: C.textMuted }}>Tasso di risparmio</div>
-                      <div className="number-display" style={{ fontSize: 21, marginTop: 4, color: savingColor }}>
-                        {fmtPct(totals.savingRate)}
-                        <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 8 }}>{fmt(totals.monthlySaving)} / mese</span>
+                  </>
+                )}
+                foot={(
+                  <>
+                    <div className="arc-stat" style={{ gap: 12 }}>
+                      <SavingArc rate={totals.savingRate} />
+                      <div>
+                        <div className="aside-label" style={{ marginBottom: 0 }}>Tasso di risparmio</div>
+                        <div className="number-display" style={{ fontSize: 21, marginTop: 4, color: savingColor }}>
+                          {fmtPct(totals.savingRate)}
+                          <span style={{ fontSize: 12, color: C.textMuted, marginLeft: 8 }}>{fmt(totals.monthlySaving)} / mese</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div style={{ fontSize: 12, color: C.textDim, maxWidth: '34ch', lineHeight: 1.5 }}>
-                    {totals.savingRate >= 0.2 ? 'Eccellente: oltre un quinto del netto resta ogni mese.'
-                      : totals.savingRate >= 0.1 ? 'In linea, migliorabile: il margine c’è ma è sottile.'
-                        : 'Sotto soglia: rivedi le spese variabili o le rate in corso.'}
-                  </div>
-                </div>
-              </section>
+                    <div style={{ fontSize: 12, color: C.textDim, maxWidth: '34ch', lineHeight: 1.5 }}>
+                      {totals.savingRate >= 0.2 ? 'Eccellente: oltre un quinto del netto resta ogni mese.'
+                        : totals.savingRate >= 0.1 ? 'In linea, migliorabile: il margine c’è ma è sottile.'
+                          : 'Sotto soglia: rivedi le spese variabili o le rate in corso.'}
+                    </div>
+                  </>
+                )} />
 
               {/* ── Dati di contorno: un bordo per il gruppo, filetti fra le celle ── */}
               <div className="stat-strip reveal" style={{ animationDelay: '60ms' }}>
@@ -2926,7 +3330,7 @@ function FinanceDashboard() {
                   <div className="stat-value" style={{ color: C.sage }}>{fmt(totals.totalIncome)}</div>
                   <div className="stat-hint">
                     {data.income.length} {data.income.length === 1 ? 'fonte' : 'fonti'}
-                    {totals.cedolinoAttivo ? ` · netto da cedolino ${totals.cedolinoAttivo.month}` : ''}
+                    {totals.cedolinoAttivo ? ` · netto da cedolino ${itMonthLabel(totals.cedolinoAttivo.month)}` : ''}
                   </div>
                   <div style={{ marginTop: 10 }}>
                     <div className="progress-track">
@@ -2968,10 +3372,10 @@ function FinanceDashboard() {
               </div>
 
               {/* Bar: allocazione */}
-              <div className="bento-card span-8 row-2">
-                <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Allocazione flusso mensile</span></span><span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>su {fmt(totals.totalIncome)}</span></h3>
-                <ResponsiveContainer width="100%" height={chartH(300, 240)}>
-                  <BarChart data={barData} layout="vertical" margin={{ left: 10, right: 30, top: 10 }}>
+              <div className="bento-card span-8 row-2 chart-card">
+                <h3 className="card-title"><span><span className="diamond">◆</span><span>Allocazione flusso mensile</span></span><span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>su {fmt(totals.totalIncome)}</span></h3>
+                <ResponsiveContainer width="100%" height={chartH(300, 230)}>
+                  <BarChart data={barData} layout="vertical" margin={{ left: 0, right: scale.margin.right + 8, top: 6, bottom: 0 }}>
                     <defs>
                       {barData.map((d, i) => (
                         <linearGradient key={i} id={`barGrad${i}`} x1="0" y1="0" x2="1" y2="0">
@@ -2981,9 +3385,9 @@ function FinanceDashboard() {
                       ))}
                     </defs>
                     <CartesianGrid strokeDasharray="2 4" stroke={C.border} horizontal={false} />
-                    <XAxis type="number" stroke={C.textMuted} tickFormatter={v => `${v}€`} />
-                    <YAxis type="category" dataKey="name" stroke={C.textMuted} width={narrow ? 62 : 80} tick={{ fontSize: narrow ? 10 : 11 }} />
-                    <Tooltip {...ttStyle} formatter={(v) => fmt(v)} />
+                    <XAxis type="number" {...scale.axis} tickFormatter={fmtTick} minTickGap={scale.minTickGap} />
+                    <YAxis type="category" dataKey="name" {...scale.axis} width={narrow ? 64 : 80} />
+                    <Tooltip {...TT_BAR} formatter={(v) => fmt(v)} />
                     <Bar dataKey="value" radius={[0, 6, 6, 0]}>
                       {barData.map((_, i) => <Cell key={i} fill={`url(#barGrad${i})`} />)}
                     </Bar>
@@ -2991,45 +3395,30 @@ function FinanceDashboard() {
                 </ResponsiveContainer>
               </div>
 
-              {/* Pie: composizione patrimoniale */}
-              <div className="bento-card span-4 row-2">
-                <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Composizione patrimonio</span></span></h3>
-                <div style={{ position: 'relative', width: '100%', height: 240 }}>
-                  <ResponsiveContainer width="100%" height={chartH(240, 210)}>
-                    <PieChart>
-                      <Pie data={[{ name: 'Liquidita', value: data.liquidity.current }, ...data.investments.map(i => ({ name: i.label, value: i.current }))].filter(d => d.value > 0)}
-                        dataKey="value" cx="50%" cy="50%" innerRadius={55} outerRadius={90} paddingAngle={3}>
-                        {[C.textDim, ...PIE_COLORS].map((c, i) => <Cell key={i} fill={c} />)}
-                      </Pie>
-                      <Tooltip {...ttStyle} formatter={(v) => fmt(v)} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-                    <div className="mono-font" style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em' }}>TOTALE</div>
-                    <div className="display-font number-display" style={{ fontSize: 22, color: C.gold }}>{fmt(totals.netWorth)}</div>
-                  </div>
-                </div>
-                <div style={{ fontSize: 11, color: C.textDim, marginTop: 8 }}>
-                  <span style={{ color: C.textDim }}>● Liquidita {fmtPct(data.liquidity.current / Math.max(1, totals.netWorth))}</span>{'  '}
-                  <span style={{ color: C.gold }}>● Investimenti {fmtPct(totals.totalInvestCurrent / Math.max(1, totals.netWorth))}</span>
-                </div>
+              {/* Ciambella: composizione patrimoniale. Sul telefono a tutta
+                  larghezza (.chart-card): a metà colonna il disco usciva dalla
+                  scheda e il totale al centro finiva tagliato. */}
+              <div className="bento-card span-4 row-2 chart-card">
+                <h3 className="card-title"><span><span className="diamond">◆</span><span>Composizione patrimonio</span></span></h3>
+                <Donut data={composition} colors={composition.map(d => d.color)} height={chartH(210, 196)}
+                  center={(
+                    <>
+                      <span className="donut-center-label">Totale</span>
+                      <span className="donut-center-value">{fmt(totals.netWorth)}</span>
+                    </>
+                  )} />
+                <DonutLegend data={composition} colors={composition.map(d => d.color)} />
               </div>
 
               {/* Line chart: 5 years */}
-              <div className="bento-card span-7 row-2">
-                <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Patrimonio — prossimi 5 anni</span></span><span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>{fmt(projection[60]?.netWorth || 0)}</span></h3>
+              <div className="bento-card span-7 row-2 chart-card">
+                <h3 className="card-title"><span><span className="diamond">◆</span><span>Patrimonio — prossimi 5 anni</span></span><span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>{fmt(projection[60]?.netWorth || 0)}</span></h3>
                 <ResponsiveContainer width="100%" height={chartH(280, 200)}>
-                  <LineChart data={projection.filter((_, i) => i % 3 === 0)}>
-                    <defs>
-                      <linearGradient id="netGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={C.gold} stopOpacity="0.3" />
-                        <stop offset="100%" stopColor={C.gold} stopOpacity="0" />
-                      </linearGradient>
-                    </defs>
+                  <LineChart data={projection.filter((_, i) => i % 3 === 0)} margin={scale.margin}>
                     <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
-                    <XAxis dataKey="month" stroke={C.textMuted} tickFormatter={v => v % 12 === 0 ? `${v / 12}a` : ''} />
-                    <YAxis stroke={C.textMuted} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                    <Tooltip {...ttStyle} formatter={(v) => fmt(v)} labelFormatter={(l) => `Mese ${l}`} />
+                    <XAxis dataKey="month" {...scale.axis} ticks={[0, 12, 24, 36, 48, 60]} interval={0} tickFormatter={v => `${v / 12}a`} />
+                    <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick} />
+                    <Tooltip {...TT_LINE} formatter={(v) => fmt(v)} labelFormatter={(l) => `Mese ${l}`} />
                     <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={2.5} dot={false} name="Patrimonio" />
                   </LineChart>
                 </ResponsiveContainer>
@@ -3051,7 +3440,7 @@ function FinanceDashboard() {
               {/* Diagnostica */}
               <div className="bento-card span-12">
                 <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Diagnosi rapida</span></span></h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 18 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 18 }}>
                   <DiagnosticItem ok={totals.savingRate >= 0.1} title="Tasso risparmio"
                     text={`${fmtPct(totals.savingRate)} del netto. ${totals.savingRate >= 0.2 ? 'Eccellente.' : totals.savingRate >= 0.1 ? 'In linea, migliorabile.' : 'Sotto soglia: rivedi spese o rate.'}`} />
                   <DiagnosticItem ok={totals.emergencyMonths >= 6} title="Fondo emergenza"
@@ -3069,6 +3458,18 @@ function FinanceDashboard() {
           {/* ══════ INCOME & EXPENSES ══════ */}
           {activeTab === 'income' && (
             <div className="bento">
+              {/* Il risultato in cima, che si aggiorna mentre si scrive: prima
+                  si modificavano le voci senza vedere cosa restava a fine mese */}
+              <StatStrip delay={0} items={[
+                {
+                  label: 'Entrate', value: fmt(totals.totalIncome), color: C.sage,
+                  hint: totals.cedolinoAttivo ? `netto da cedolino ${itMonthLabel(totals.cedolinoAttivo.month)}` : `${data.income.length} ${data.income.length === 1 ? 'fonte' : 'fonti'}`
+                },
+                { label: 'Spese e rate', value: fmt(totals.essentialExpenses), color: C.rust, hint: `fisse ${fmt(totals.totalFixed)} · variabili ${fmt(totals.totalVariable)} · rate ${fmt(totals.totalLoans)}` },
+                { label: 'Investite', value: fmt(totals.totalInvestMonthly), color: C.gold, hint: 'PAC mensili' },
+                { label: 'Resta ogni mese', value: fmt(totals.monthlySaving), color: savingColor, hint: `${fmtPct(totals.savingRate)} del netto`, key: true }
+              ]} />
+
               <div className="bento-card span-6 accent-sage">
                 <h3 className="card-title"><span><span className="diamond" style={{ color: C.sage }}>◆</span><span style={{ fontStyle: 'italic' }}>Entrate</span></span><span className="mono-font" style={{ fontSize: 14, color: C.sage }}>{fmt(totals.totalIncome)}</span></h3>
                 <DataTable items={data.income} section="income" onUpdate={updateField} onRemove={removeItem} fields={['label', 'amount']} />
@@ -3148,44 +3549,63 @@ function FinanceDashboard() {
           )}
 
           {/* ══════ PROJECTION ══════ */}
-          {activeTab === 'projection' && (
-            <div className="bento">
-              <div className="bento-card span-12">
-                <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Proiezione patrimoniale a 60 mesi</span></span></h3>
-                <p style={{ fontSize: 12, color: C.textDim, marginBottom: 16 }}>
-                  Ipotesi rendimenti annui: Equity 7%, Pensione 4% (netto costi), Cripto 12% (alta volatilita), Bond 3%. Le rate decrescono in base ai mesi residui.
-                </p>
-                <ResponsiveContainer width="100%" height={chartH(400, 260)}>
-                  <LineChart data={projection}>
-                    <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
-                    <XAxis dataKey="month" stroke={C.textMuted} tickFormatter={v => v % 12 === 0 ? `${v / 12}a` : ''} />
-                    <YAxis stroke={C.textMuted} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                    <Tooltip {...ttStyle} formatter={(v) => fmt(v)} labelFormatter={(l) => `Mese ${l}`} />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Line type="monotone" dataKey="liquidity" stroke={C.textDim} strokeWidth={2} name="Liquidita" dot={false} />
-                    <Line type="monotone" dataKey="investments" stroke={C.rust} strokeWidth={2} name="Investimenti" dot={false} />
-                    <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={3} name="Patrimonio totale" dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+          {activeTab === 'projection' && (() => {
+            const growthAt = (point) => point && totals.netWorth > 0 ? (point.netWorth - totals.netWorth) / totals.netWorth : 0;
+            const signedPct = (g) => `${g >= 0 ? '+' : '−'}${fmtPct(Math.abs(g))}`;
+            const end = projection[60];
+            const g60 = growthAt(end);
+            return (
+              <div className="bento">
+                {/* Il punto d'arrivo è il numero grande; prima era la quarta di
+                    quattro schede uguali, in fondo alla pagina */}
+                <PageHero label="Patrimonio tra 5 anni" value={end ? end.netWorth : 0}
+                  meta={<>
+                    <HeroDelta up={g60 >= 0}>{fmtPct(Math.abs(g60))}</HeroDelta>
+                    <span>rispetto a oggi, {fmt(totals.netWorth)}</span>
+                  </>}
+                  aside={end ? (
+                    <PartBars title="Da cosa sarà fatto" total={Math.max(1, end.netWorth)} parts={[
+                      { name: 'Liquidita', value: end.liquidity, color: C.textDim },
+                      { name: 'Investimenti', value: end.investments, color: C.gold }
+                    ]} />
+                  ) : null} />
 
-              {[12, 24, 36, 60].map(m => {
-                const point = projection[m];
-                const growth = point && totals.netWorth > 0 ? ((point.netWorth - totals.netWorth) / totals.netWorth) : 0;
-                return (
-                  <div key={m} className="bento-card span-3">
-                    <div className="card-eyebrow">Tra {m / 12} {m === 12 ? 'anno' : 'anni'}</div>
-                    <div className="kpi-value" style={{ color: C.gold }}>{point ? fmt(point.netWorth) : '—'}</div>
-                    <div className="mono-font" style={{ fontSize: 11, color: C.sage, marginTop: 8 }}>+{fmtPct(growth)}</div>
-                    {point && <div className="mono-font" style={{ fontSize: 11, color: C.textDim, marginTop: 8, lineHeight: 1.6 }}>
-                      Liq: {fmt(point.liquidity)}<br />
-                      Inv: {fmt(point.investments)}
-                    </div>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                <StatStrip items={[12, 24, 36].map(m => {
+                  const point = projection[m];
+                  const g = growthAt(point);
+                  return {
+                    label: `Tra ${m / 12} ${m === 12 ? 'anno' : 'anni'}`,
+                    value: point ? fmt(point.netWorth) : '—',
+                    color: C.gold,
+                    hint: point ? <><span style={{ color: g >= 0 ? C.sage : C.rust }}>{signedPct(g)}</span> · Liq {fmt(point.liquidity)} · Inv {fmt(point.investments)}</> : null
+                  };
+                })} />
+
+                <div className="bento-card span-12 chart-card">
+                  <h3 className="card-title"><span><span className="diamond">◆</span><span>Proiezione patrimoniale a 60 mesi</span></span></h3>
+                  <p style={{ fontSize: 12, color: C.textDim, marginBottom: 14, lineHeight: 1.5, maxWidth: '75ch' }}>
+                    Ipotesi rendimenti annui: Equity 7%, Pensione 4% (netto costi), Cripto 12% (alta volatilita), Bond 3%. Le rate decrescono in base ai mesi residui.
+                  </p>
+                  <ChartLegend items={[
+                    { label: 'Patrimonio totale', color: C.gold },
+                    { label: 'Investimenti', color: C.rust },
+                    { label: 'Liquidita', color: C.textDim }
+                  ]} />
+                  <ResponsiveContainer width="100%" height={chartH(380, 240)}>
+                    <LineChart data={projection} margin={scale.margin}>
+                      <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
+                      <XAxis dataKey="month" {...scale.axis} ticks={[0, 12, 24, 36, 48, 60]} interval={0} tickFormatter={v => `${v / 12}a`} />
+                      <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick} />
+                      <Tooltip {...TT_LINE} formatter={(v) => fmt(v)} labelFormatter={(l) => `Mese ${l}`} />
+                      <Line type="monotone" dataKey="liquidity" stroke={C.textDim} strokeWidth={2} name="Liquidita" dot={false} />
+                      <Line type="monotone" dataKey="investments" stroke={C.rust} strokeWidth={2} name="Investimenti" dot={false} />
+                      <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={3} name="Patrimonio totale" dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* ══════ MUTUI ══════ */}
           {activeTab === 'mortgage' && (() => {
@@ -3238,10 +3658,48 @@ function FinanceDashboard() {
 
             return (
               <div className="bento">
+                {/* ── Hero: la rata, colorata da quanto pesa sul reddito ──
+                    Prima la rata era un numero medio dentro la scheda
+                    "Sostenibilità", accanto ad altri quattro riquadri uguali. */}
+                <PageHero label="Rata mensile · incl. assicurazione" value={rataTot} format={fmtEUR2} tone={susColor}
+                  meta={<span>{nA} rate · {(Number(m.years) || 0)} anni · TAN {fmtPct2((Number(m.rate) || 0) / 100)} · importo {fmt(m.amount)}</span>}
+                  aside={(
+                    <div>
+                      <div className="aside-label">Incidenza sul reddito netto</div>
+                      <div className="stat-value" style={{ color: susColor }}>{fmtPct(incidenza)}</div>
+                      {/* Le due tacche segnano la soglia consigliata, 30% e 35% */}
+                      <div className="progress-track" style={{ height: 8, marginTop: 12 }}>
+                        <div className="progress-fill" style={{ '--fill': Math.min(1, incidenza), background: susColor }} />
+                        <span className="target-tick" style={{ left: '30%' }} />
+                        <span className="target-tick" style={{ left: '35%' }} />
+                      </div>
+                      <div className="stat-hint" style={{ marginTop: 6 }}>soglia consigliata 30–35%</div>
+                      <dl className="hero-facts">
+                        <div><dt>Reddito netto mensile</dt><dd>{fmt(totals.totalIncome)}</dd></div>
+                        <div><dt>Risparmio mensile attuale</dt><dd>{fmt(totals.monthlySaving)}</dd></div>
+                        <div><dt>Risparmio residuo dopo la rata</dt><dd style={{ color: risparmioResiduo < 0 ? C.danger : C.sage }}>{fmt(risparmioResiduo)}</dd></div>
+                      </dl>
+                      {/* Icona disegnata, non un glifo unicode prestato al posto di un'icona */}
+                      {incidenza > 0.35 && (
+                        <div className="inline-error" role="note">
+                          <Ic.alert size={15} />
+                          <span>La rata supera il 35% del reddito netto: molte banche non concedono il finanziamento a queste condizioni.</span>
+                        </div>
+                      )}
+                    </div>
+                  )} />
+
+                <StatStrip items={[
+                  { label: 'Rata mensile (mutuo)', value: fmtEUR2(payA), color: C.gold, hint: `senza assicurazione · ${nA} rate` },
+                  { label: 'Totale interessi', value: fmt(totIntA), color: C.rust, hint: `${m.amount > 0 ? fmtPct(totIntA / m.amount) : '—'} sul capitale` },
+                  { label: 'Costo totale', value: fmt(costTotA), hint: 'capitale + interessi + spese' },
+                  { label: 'TAEG indicativo', value: fmtPct2(taegA), color: C.gold, hint: `TAN ${fmtPct2((Number(m.rate) || 0) / 100)}` }
+                ]} />
+
                 {/* Parametri */}
-                <div className="bento-card span-7">
-                  <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Parametri mutuo</span></span></h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16, marginTop: 4 }}>
+                <div className="bento-card span-12">
+                  <h3 className="card-title"><span><span className="diamond">◆</span><span>Parametri mutuo</span></span></h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))', gap: 16, marginTop: 4 }}>
                     {mInput('Importo del mutuo', 'amount', '1000', '€')}
                     {mInput('Durata', 'years', '1', 'anni')}
                     {mInput('Tasso annuo (TAN)', 'rate', '0.05', '%')}
@@ -3250,7 +3708,7 @@ function FinanceDashboard() {
                   </div>
                   <div style={{ marginTop: 22, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
                     <div className="card-eyebrow" style={{ marginBottom: 12 }}>Scenario di confronto (B)</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 150px), 1fr))', gap: 16 }}>
                       {mInput('TAN scenario B', 'rateB', '0.05', '%')}
                       {mInput('Durata scenario B', 'yearsB', '1', 'anni')}
                     </div>
@@ -3260,66 +3718,16 @@ function FinanceDashboard() {
                   </p>
                 </div>
 
-                {/* Sostenibilità */}
-                <div className="bento-card span-5">
-                  <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Sostenibilità della rata</span></span></h3>
-                  <div className="card-eyebrow">Rata mensile (incl. assicurazione)</div>
-                  <div className="kpi-value" style={{ color: susColor }}>{fmtEUR2(rataTot)}</div>
-                  <div style={{ marginTop: 16 }}>
-                    <div className="progress-track" style={{ height: 8 }}>
-                      <div className="progress-fill" style={{ '--fill': (Math.min(100, incidenza * 100)) / 100, background: susColor }} />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-                      <span className="mono-font" style={{ fontSize: 11, color: C.textDim }}>Incidenza sul reddito netto: {fmtPct(incidenza)}</span>
-                      <span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>soglia consigliata 30–35%</span>
-                    </div>
-                  </div>
-                  <div className="mono-font" style={{ fontSize: 12, color: C.textDim, marginTop: 18, lineHeight: 1.9 }}>
-                    Reddito netto mensile: <span style={{ color: C.text }}>{fmt(totals.totalIncome)}</span><br />
-                    Risparmio mensile attuale: <span style={{ color: C.text }}>{fmt(totals.monthlySaving)}</span><br />
-                    Risparmio residuo dopo la rata: <span style={{ color: risparmioResiduo < 0 ? C.danger : C.sage, fontWeight: 600 }}>{fmt(risparmioResiduo)}</span>
-                  </div>
-                  {/* Icona disegnata, non un glifo unicode prestato al posto di un'icona */}
-                  {incidenza > 0.35 && (
-                    <p style={{ fontSize: 12, color: C.danger, marginTop: 12, display: 'flex', gap: 8, alignItems: 'flex-start', lineHeight: 1.5 }}>
-                      <span style={{ flexShrink: 0, marginTop: 1 }}><Ic.alert size={15} /></span>
-                      <span>La rata supera il 35% del reddito netto: molte banche non concedono il finanziamento a queste condizioni.</span>
-                    </p>
-                  )}
-                </div>
-
-                {/* KPI */}
-                <div className="bento-card span-3">
-                  <div className="card-eyebrow">Rata mensile (mutuo)</div>
-                  <div className="kpi-value" style={{ color: C.gold }}>{fmtEUR2(payA)}</div>
-                  <div className="mono-font" style={{ fontSize: 11, color: C.textDim, marginTop: 8 }}>{nA} rate · {(Number(m.years) || 0)} anni</div>
-                </div>
-                <div className="bento-card span-3 accent-rust">
-                  <div className="card-eyebrow">Totale interessi</div>
-                  <div className="kpi-value" style={{ color: C.rust }}>{fmt(totIntA)}</div>
-                  <div className="mono-font" style={{ fontSize: 11, color: C.textDim, marginTop: 8 }}>{m.amount > 0 ? fmtPct(totIntA / m.amount) : '—'} sul capitale</div>
-                </div>
-                <div className="bento-card span-3">
-                  <div className="card-eyebrow">Costo totale</div>
-                  <div className="kpi-value" style={{ color: C.text }}>{fmt(costTotA)}</div>
-                  <div className="mono-font" style={{ fontSize: 11, color: C.textDim, marginTop: 8 }}>capitale + interessi + spese</div>
-                </div>
-                <div className="bento-card span-3">
-                  <div className="card-eyebrow">TAEG indicativo</div>
-                  <div className="kpi-value" style={{ color: C.gold }}>{fmtPct2(taegA)}</div>
-                  <div className="mono-font" style={{ fontSize: 11, color: C.textDim, marginTop: 8 }}>TAN {fmtPct2((Number(m.rate) || 0) / 100)}</div>
-                </div>
-
                 {/* Grafico capitale residuo */}
-                <div className="bento-card span-12">
-                  <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Capitale residuo e interessi cumulati</span></span></h3>
-                  <ResponsiveContainer width="100%" height={340}>
-                    <LineChart data={chartData}>
+                <div className="bento-card span-12 chart-card">
+                  <h3 className="card-title"><span><span className="diamond">◆</span><span>Capitale residuo e interessi cumulati</span></span></h3>
+                  <ChartLegend items={[{ label: 'Capitale residuo', color: C.gold }, { label: 'Interessi cumulati', color: C.rust }]} />
+                  <ResponsiveContainer width="100%" height={chartH(340, 230)}>
+                    <LineChart data={chartData} margin={scale.margin}>
                       <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
-                      <XAxis dataKey="year" stroke={C.textMuted} tickFormatter={v => `${v}a`} />
-                      <YAxis stroke={C.textMuted} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                      <Tooltip {...ttStyle} formatter={v => fmt(v)} labelFormatter={l => `Anno ${l}`} />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <XAxis dataKey="year" {...scale.axis} minTickGap={scale.minTickGap} tickFormatter={v => `${v}a`} />
+                      <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick} />
+                      <Tooltip {...TT_LINE} formatter={v => fmt(v)} labelFormatter={l => `Anno ${l}`} />
                       <Line type="monotone" dataKey="residuo" stroke={C.gold} strokeWidth={3} name="Capitale residuo" dot={false} />
                       <Line type="monotone" dataKey="interessi" stroke={C.rust} strokeWidth={2} name="Interessi cumulati" dot={false} />
                     </LineChart>
@@ -3328,8 +3736,8 @@ function FinanceDashboard() {
 
                 {/* Confronto scenari */}
                 <div className="bento-card span-12">
-                  <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Confronto scenari</span></span></h3>
-                  <div style={{ overflowX: 'auto' }}>
+                  <h3 className="card-title"><span><span className="diamond">◆</span><span>Confronto scenari</span></span></h3>
+                  <div className="desktop-table" style={{ overflowX: 'auto' }}>
                     <table className="mono-font" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                       <thead>
                         <tr style={{ color: C.textMuted, textAlign: 'right' }}>
@@ -3363,6 +3771,24 @@ function FinanceDashboard() {
                         </tr>
                       </tbody>
                     </table>
+                  </div>
+                  {/* Telefono: A e B affiancati. Prima la tabella a sette colonne
+                      tagliava la rata a metà ("727,") */}
+                  <div className="phone-list scenario-pair">
+                    {[
+                      { name: 'A (attuale)', color: C.gold, rate: m.rate, years: m.years, pay: payA, interest: totIntA, cost: costTotA, bestInt: totIntA <= totIntB, bestCost: costTotA <= costTotB },
+                      { name: 'B (confronto)', color: C.purple, rate: m.rateB, years: m.yearsB, pay: payB, interest: totIntB, cost: costTotB, bestInt: totIntB < totIntA, bestCost: costTotB < costTotA }
+                    ].map(sc => (
+                      <div key={sc.name} className="m-card">
+                        <div className="m-row-title" style={{ color: sc.color }}>{sc.name}</div>
+                        <dl className="hero-facts stacked">
+                          <div><dt>TAN · durata</dt><dd>{fmtPct2((Number(sc.rate) || 0) / 100)} · {(Number(sc.years) || 0)} anni</dd></div>
+                          <div><dt>Rata</dt><dd>{fmtEUR2(sc.pay)}</dd></div>
+                          <div><dt>Totale interessi</dt><dd style={{ color: sc.bestInt ? C.sage : C.text }}>{fmt(sc.interest)}</dd></div>
+                          <div><dt>Costo totale</dt><dd style={{ color: sc.bestCost ? C.sage : C.text }}>{fmt(sc.cost)}</dd></div>
+                        </dl>
+                      </div>
+                    ))}
                   </div>
                   <p style={{ fontSize: 11, color: C.textDim, marginTop: 10 }}>In verde lo scenario con interessi / costo totale inferiore. Differenza interessi: {fmt(Math.abs(totIntA - totIntB))}.</p>
                 </div>
@@ -3398,60 +3824,106 @@ function FinanceDashboard() {
           })()}
 
           {/* ══════ HISTORY ══════ */}
-          {activeTab === 'history' && (
-            <div className="bento">
-              <div className="bento-card span-12">
-                <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Storico mensile</span></span></h3>
-                <p style={{ fontSize: 12, color: C.textDim, marginBottom: 16 }}>
-                  Usa il pulsante "Snapshot" in alto per salvare lo stato del mese corrente. Ogni mese si sovrascrive se gia presente.
-                </p>
-                {(data.history || []).length === 0 ? (
-                  <div style={{ padding: 40, textAlign: 'center', color: C.textMuted }}>
-                    <Ic.trend size={32} />
-                    <p style={{ marginTop: 12 }}>Nessuno snapshot salvato. Clicca "Snapshot" per iniziare.</p>
-                  </div>
-                ) : (
-                  <div>
-                    <ResponsiveContainer width="100%" height={chartH(300, 230)}>
-                      <LineChart data={data.history}>
-                        <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
-                        <XAxis dataKey="date" stroke={C.textMuted} />
-                        <YAxis stroke={C.textMuted} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                        <Tooltip {...ttStyle} formatter={(v) => fmt(v)} />
-                        <Legend wrapperStyle={{ fontSize: 12 }} />
-                        <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={2} name="Patrimonio" dot={{ r: 4 }} />
-                        <Line type="monotone" dataKey="liquidity" stroke={C.textDim} strokeWidth={1.5} name="Liquidita" dot={{ r: 3 }} />
-                        <Line type="monotone" dataKey="investments" stroke={C.sage} strokeWidth={1.5} name="Investimenti" dot={{ r: 3 }} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                    <div style={{ overflowX: 'auto', marginTop: 20 }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                        <thead>
-                          <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                            {['Mese', 'Patrimonio', 'Liquidita', 'Investimenti', 'Entrate', 'Risparmio'].map(h => (
-                              <th key={h} style={{ textAlign: 'left', padding: '10px 8px', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.15em', color: C.textMuted }}>{h}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {data.history.map((h) => (
-                            <tr key={h.date} style={{ borderBottom: `1px solid ${C.border}` }}>
-                              <td className="mono-font" style={{ padding: '10px 8px' }}>{h.date}</td>
-                              <td className="mono-font" style={{ padding: '10px 8px', color: C.gold }}>{fmt(h.netWorth)}</td>
-                              <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.liquidity)}</td>
-                              <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.investments)}</td>
-                              <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.income)}</td>
-                              <td className="mono-font" style={{ padding: '10px 8px', color: h.saving >= 0 ? C.sage : C.danger }}>{fmt(h.saving)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+          {activeTab === 'history' && (() => {
+            const hist = data.history || [];
+            const firstH = hist[0];
+            const lastH = hist[hist.length - 1];
+            const change = lastH && firstH ? lastH.netWorth - firstH.netWorth : 0;
+            const changePct = firstH && firstH.netWorth > 0 ? change / firstH.netWorth : 0;
+            return (
+              <div className="bento">
+                {lastH && (
+                  <PageHero label={`Ultimo snapshot · ${itMonthLabel(lastH.date)}`} value={lastH.netWorth}
+                    meta={hist.length > 1 ? (
+                      <>
+                        <HeroDelta up={change >= 0}>{fmt(Math.abs(change))} ({fmtPct(Math.abs(changePct))})</HeroDelta>
+                        <span>dal primo snapshot, {itMonthLabel(firstH.date)}</span>
+                      </>
+                    ) : (
+                      <span>Il primo della serie: salvane uno ogni mese per vedere l'andamento.</span>
+                    )}
+                    aside={hist.length > 1 ? (
+                      <div>
+                        <div className="aside-label" style={{ marginBottom: 8 }}>Andamento · {hist.length} snapshot</div>
+                        <Sparkline points={hist.map(h => h.netWorth)} color={C.gold} />
+                      </div>
+                    ) : null}
+                    foot={<button className="btn-ghost" onClick={saveSnapshot} style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}><Ic.check /> Salva lo snapshot di questo mese</button>} />
                 )}
+
+                <div className="bento-card span-12 chart-card">
+                  <h3 className="card-title"><span><span className="diamond">◆</span><span>Storico mensile</span></span></h3>
+                  {/* Sul telefono il pulsante "Snapshot" in alto non esiste: sta
+                      nel menu ⋯, oppure qui sotto */}
+                  <p style={{ fontSize: 12, color: C.textDim, marginBottom: 16, lineHeight: 1.5 }}>
+                    Uno snapshot fissa patrimonio, liquidità, investimenti ed entrate del mese. Se il mese è già salvato, viene sovrascritto.
+                  </p>
+                  {hist.length === 0 ? (
+                    <div style={{ padding: '32px 12px', textAlign: 'center', color: C.textMuted }}>
+                      <span style={{ color: C.gold }}><Ic.trend size={32} /></span>
+                      <p style={{ margin: '12px 0 18px' }}>Nessuno snapshot salvato.</p>
+                      <button className="btn-primary" onClick={saveSnapshot}><Ic.check /> Salva il primo snapshot</button>
+                    </div>
+                  ) : (
+                    <div>
+                      <ChartLegend items={[
+                        { label: 'Patrimonio', color: C.gold },
+                        { label: 'Liquidita', color: C.textDim },
+                        { label: 'Investimenti', color: C.sage }
+                      ]} />
+                      <ResponsiveContainer width="100%" height={chartH(300, 220)}>
+                        <LineChart data={hist} margin={scale.margin}>
+                          <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
+                          <XAxis dataKey="date" {...scale.axis} minTickGap={scale.minTickGap} />
+                          <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick} />
+                          <Tooltip {...TT_LINE} formatter={(v) => fmt(v)} />
+                          <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={2} name="Patrimonio" dot={{ r: 4 }} />
+                          <Line type="monotone" dataKey="liquidity" stroke={C.textDim} strokeWidth={1.5} name="Liquidita" dot={{ r: 3 }} />
+                          <Line type="monotone" dataKey="investments" stroke={C.sage} strokeWidth={1.5} name="Investimenti" dot={{ r: 3 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                      <div className="desktop-table" style={{ overflowX: 'auto', marginTop: 20 }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                          <thead>
+                            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                              {['Mese', 'Patrimonio', 'Liquidita', 'Investimenti', 'Entrate', 'Risparmio'].map(h => (
+                                <th key={h} style={{ textAlign: 'left', padding: '10px 8px', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.15em', color: C.textMuted }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {hist.map((h) => (
+                              <tr key={h.date} style={{ borderBottom: `1px solid ${C.border}` }}>
+                                <td className="mono-font" style={{ padding: '10px 8px' }}>{h.date}</td>
+                                <td className="mono-font" style={{ padding: '10px 8px', color: C.gold }}>{fmt(h.netWorth)}</td>
+                                <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.liquidity)}</td>
+                                <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.investments)}</td>
+                                <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.income)}</td>
+                                <td className="mono-font" style={{ padding: '10px 8px', color: h.saving >= 0 ? C.sage : C.danger }}>{fmt(h.saving)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="phone-list" style={{ marginTop: 16 }}>
+                        {[...hist].reverse().map(h => (
+                          <div key={h.date} className="m-row">
+                            <div style={{ minWidth: 0 }}>
+                              <div className="m-row-title">{itMonthLabel(h.date)}</div>
+                              <div className="m-row-sub">
+                                Liq {fmt(h.liquidity)} · Inv {fmt(h.investments)} · risparmio <span style={{ color: h.saving >= 0 ? C.sage : C.danger }}>{fmt(h.saving)}</span>
+                              </div>
+                            </div>
+                            <span className="m-row-value" style={{ color: C.gold }}>{fmt(h.netWorth)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* ══════ CEDOLINI ══════ */}
           {activeTab === 'cedolini' && (
