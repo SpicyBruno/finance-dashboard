@@ -1,5 +1,5 @@
 // Service worker per la PWA "Finanze"
-const CACHE = 'finanze-v4';
+const CACHE = 'finanze-v5';
 
 // Percorsi relativi alla posizione del service worker: cosi' il sito funziona
 // sia servito dalla radice sia da una sottocartella.
@@ -14,6 +14,13 @@ const ASSETS = [
   './apple-touch-icon.png',
   './favicon-32.png',
   './download (42).jpg',
+  // Marchio e font: in locale, cosi' offline non si ripiega sui font di sistema.
+  // I file latin-ext si mettono in cache al primo uso (cache-first piu' sotto).
+  './brand/lockup.svg',
+  './brand/symbol.svg',
+  './fonts/hanken-grotesk-latin.woff2',
+  './fonts/shippori-mincho-b1-500-latin.woff2',
+  './fonts/shippori-mincho-b1-600-latin.woff2',
   // Librerie: precaricate in locale, altrimenti offline l'app non parte
   './vendor/react.production.min.js',
   './vendor/react-dom.production.min.js',

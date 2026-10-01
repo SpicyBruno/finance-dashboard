@@ -1345,13 +1345,26 @@ function PageHero({
     style: tone ? {
       color: tone
     } : undefined
-  }, numeric ? format(shown) : value), meta && /*#__PURE__*/React.createElement("div", {
+  }, numeric ? /*#__PURE__*/React.createElement(Figures, {
+    text: format(shown)
+  }) : value), meta && /*#__PURE__*/React.createElement("div", {
     className: "hero-meta"
   }, meta)), aside && /*#__PURE__*/React.createElement("div", {
     className: "hero-aside"
   }, aside)), foot && /*#__PURE__*/React.createElement("div", {
     className: `hero-foot ${footClass}`
   }, foot));
+}
+
+/* Cifre a larghezza fissa per il Mincho, che non ha cifre tabellari: senza,
+   il numero hero cambia larghezza a ogni fotogramma del conteggio. */
+function Figures({
+  text
+}) {
+  return String(text).split(/(\d)/).map((part, i) => /^\d$/.test(part) ? /*#__PURE__*/React.createElement("span", {
+    key: i,
+    className: "fig"
+  }, part) : part);
 }
 function HeroDelta({
   up,
@@ -1661,6 +1674,20 @@ function Toast({
   }, message);
 }
 
+/* ── Marchio ──
+   Simbolo con FINANCE / ATELIER sotto (`stack`) o il solo simbolo. Il disegno
+   sta in brand/*.svg e fa da maschera: il colore segue il tema. */
+function BrandMark({
+  variant = 'stack',
+  className = ''
+}) {
+  return /*#__PURE__*/React.createElement("span", {
+    className: `brand-mark ${variant === 'symbol' ? 'symbol' : ''} ${className}`,
+    role: "img",
+    "aria-label": "Finance Atelier"
+  });
+}
+
 /* ── Sidebar (solo desktop) ── */
 function Sidebar({
   tabs,
@@ -1691,10 +1718,9 @@ function Sidebar({
       transform: `translateY(${plateY}px)`
     },
     "aria-hidden": "true"
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "sidebar-logo",
-    title: "G"
-  }, "G"), tabs.map(t => {
+  }), /*#__PURE__*/React.createElement(BrandMark, {
+    className: "sidebar-logo"
+  }), tabs.map(t => {
     const Icon = t.icon;
     return /*#__PURE__*/React.createElement("button", {
       key: t.id,
@@ -1771,7 +1797,9 @@ function MobileNav({
     }, /*#__PURE__*/React.createElement(Icon, null), /*#__PURE__*/React.createElement("span", null, t.label), /*#__PURE__*/React.createElement("span", {
       className: "sheet-chevron"
     }, /*#__PURE__*/React.createElement(Ic.chevron, null)));
-  })));
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "sheet-brand"
+  }, /*#__PURE__*/React.createElement(BrandMark, null))));
 }
 
 /* ── Reusable ── */
@@ -5533,7 +5561,10 @@ function FinanceDashboard() {
     className: "main-area"
   }, /*#__PURE__*/React.createElement("header", {
     className: "mobile-topbar"
-  }, /*#__PURE__*/React.createElement("h1", null, activeTabLabel), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement(BrandMark, {
+    variant: "symbol",
+    className: "topbar-mark"
+  }), /*#__PURE__*/React.createElement("h1", null, activeTabLabel), /*#__PURE__*/React.createElement("button", {
     className: "month-chip",
     onClick: () => setProfileSheet(true),
     "aria-haspopup": "dialog"

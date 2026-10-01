@@ -15,9 +15,10 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Finanze">
-  <link
-    href="https://fonts.googleapis.com/css2?family=Stack+Sans+Notch:wght@200;300;400;500;600;700&family=Source+Serif+4:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&display=swap"
-    rel="stylesheet">
+  <!-- Font serviti in locale (fonts/) e messi in cache dal service worker:
+       dal CDN di Google, offline, l'app ripiegava sui font di sistema -->
+  <link rel="preload" href="fonts/hanken-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/shippori-mincho-b1-500-latin.woff2" as="font" type="font/woff2" crossorigin>
   <!-- Librerie servite in locale: la PWA funziona davvero offline -->
   <script src="vendor/react.production.min.js"></script>
   <script src="vendor/react-dom.production.min.js"></script>
@@ -26,10 +27,69 @@
   <!-- pdf.js e tesseract.js si caricano su richiesta (vedi loadScript in src/app.jsx) -->
 
   <style>
+    /* ── Font ──
+       Hanken Grotesk per interfaccia e cifre (variabile 300–700, cifre
+       tabellari); Shippori Mincho B1 per titoli e numeri hero, lo stesso
+       carattere del logo. Solo latin e latin-ext: le centinaia di sezioni
+       giapponesi del Mincho non servono. */
+    @font-face {
+      font-family: 'Hanken Grotesk';
+      font-style: normal;
+      font-weight: 300 700;
+      font-display: swap;
+      src: url('fonts/hanken-grotesk-latin-ext.woff2') format('woff2');
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+
+    @font-face {
+      font-family: 'Hanken Grotesk';
+      font-style: normal;
+      font-weight: 300 700;
+      font-display: swap;
+      src: url('fonts/hanken-grotesk-latin.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+
+    @font-face {
+      font-family: 'Shippori Mincho B1';
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: url('fonts/shippori-mincho-b1-500-latin-ext.woff2') format('woff2');
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+
+    @font-face {
+      font-family: 'Shippori Mincho B1';
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: url('fonts/shippori-mincho-b1-500-latin.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+
+    @font-face {
+      font-family: 'Shippori Mincho B1';
+      font-style: normal;
+      font-weight: 600;
+      font-display: swap;
+      src: url('fonts/shippori-mincho-b1-600-latin-ext.woff2') format('woff2');
+      unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    }
+
+    @font-face {
+      font-family: 'Shippori Mincho B1';
+      font-style: normal;
+      font-weight: 600;
+      font-display: swap;
+      src: url('fonts/shippori-mincho-b1-600-latin.woff2') format('woff2');
+      unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    }
+
     :root {
-      --font-ui: 'Stack Sans Notch', system-ui, sans-serif;
-      --font-number: 'Stack Sans Notch', system-ui, sans-serif;
-      --font-display: 'Source Serif 4', Georgia, serif;
+      --font-ui: 'Hanken Grotesk', system-ui, sans-serif;
+      --font-number: 'Hanken Grotesk', system-ui, sans-serif;
+      --font-display: 'Shippori Mincho B1', 'Hiragino Mincho ProN', 'Yu Mincho', Georgia, serif;
       --bg: #0f0e0c;
       --bg-2: #14120f;
       --card: #1a1815;
@@ -194,6 +254,8 @@
       -webkit-font-smoothing: antialiased;
       -webkit-text-size-adjust: 100%;
       font-variant-numeric: tabular-nums lining-nums;
+      /* Il Mincho non ha corsivo né pesi oltre il 600: niente versioni finte */
+      font-synthesis: none;
     }
 
     body {
@@ -302,20 +364,29 @@
       z-index: 10;
     }
 
+    /* ── Marchio ──
+       Il simbolo dell'icona con FINANCE / ATELIER sotto, in Shippori Mincho.
+       Un solo file SVG fa da maschera: il colore lo dà il tema (oro scuro o
+       oro carta), mentre l'icona della schermata Home resta corallo. */
+    .brand-mark {
+      display: block;
+      flex-shrink: 0;
+      background: var(--gold);
+      -webkit-mask: url('brand/lockup.svg') center / contain no-repeat;
+      mask: url('brand/lockup.svg') center / contain no-repeat;
+      /* proporzioni del file: 31.13 × 37.9 */
+      aspect-ratio: 31.13 / 37.9;
+    }
+
+    .brand-mark.symbol {
+      -webkit-mask-image: url('brand/symbol.svg');
+      mask-image: url('brand/symbol.svg');
+      aspect-ratio: 1;
+    }
+
     .sidebar-logo {
-      width: 40px;
-      height: 40px;
-      border-radius: 10px;
-      background: radial-gradient(circle at 30% 30%, var(--gold), var(--gold-dim));
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--bg);
-      font-family: var(--font-display);
-      font-weight: 600;
-      font-size: 20px;
-      margin-bottom: 16px;
-      box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.55);
+      width: 56px;
+      margin: 2px 0 22px;
     }
 
     .side-btn {
@@ -584,14 +655,21 @@
     }
 
     .hero-value {
-      font-family: var(--font-number);
-      font-variant-numeric: tabular-nums lining-nums;
+      font-family: var(--font-display);
       font-size: var(--t-hero);
-      font-weight: 300;
-      line-height: 0.92;
-      letter-spacing: -0.03em;
+      font-weight: 500;
+      line-height: 1;
+      letter-spacing: -0.015em;
       color: var(--gold);
       margin-top: 10px;
+    }
+
+    /* Le cifre del Mincho sono proporzionali: mentre il numero si assesta
+       la riga tremerebbe. Ogni cifra sta in una cella di larghezza fissa. */
+    .hero-value .fig {
+      display: inline-block;
+      width: 0.57em;
+      text-align: center;
     }
 
     .hero-label {
@@ -1701,6 +1779,22 @@
       font-size: var(--t-title);
       color: var(--text);
       padding: 0 10px 10px;
+    }
+
+    .sheet-brand {
+      display: flex;
+      justify-content: center;
+      margin-top: 12px;
+      padding: 20px 0 8px;
+      border-top: 1px solid var(--border);
+    }
+
+    .sheet-brand .brand-mark {
+      width: 84px;
+    }
+
+    .topbar-mark {
+      width: 26px;
     }
 
     .sheet-row {

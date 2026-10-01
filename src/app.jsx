@@ -434,7 +434,7 @@ function PageHero({ label, value, format = fmt, tone, meta, aside, foot, footCla
       <div className={aside ? 'hero-grid' : undefined}>
         <div>
           <div className="hero-label">{label}</div>
-          <div className="hero-value" style={tone ? { color: tone } : undefined}>{numeric ? format(shown) : value}</div>
+          <div className="hero-value" style={tone ? { color: tone } : undefined}>{numeric ? <Figures text={format(shown)} /> : value}</div>
           {meta && <div className="hero-meta">{meta}</div>}
         </div>
         {aside && <div className="hero-aside">{aside}</div>}
@@ -442,6 +442,13 @@ function PageHero({ label, value, format = fmt, tone, meta, aside, foot, footCla
       {foot && <div className={`hero-foot ${footClass}`}>{foot}</div>}
     </section>
   );
+}
+
+/* Cifre a larghezza fissa per il Mincho, che non ha cifre tabellari: senza,
+   il numero hero cambia larghezza a ogni fotogramma del conteggio. */
+function Figures({ text }) {
+  return String(text).split(/(\d)/).map((part, i) =>
+    /^\d$/.test(part) ? <span key={i} className="fig">{part}</span> : part);
 }
 
 function HeroDelta({ up, children }) {
@@ -616,6 +623,13 @@ function Toast({ message }) {
 }
 
 
+/* ── Marchio ──
+   Simbolo con FINANCE / ATELIER sotto (`stack`) o il solo simbolo. Il disegno
+   sta in brand/*.svg e fa da maschera: il colore segue il tema. */
+function BrandMark({ variant = 'stack', className = '' }) {
+  return <span className={`brand-mark ${variant === 'symbol' ? 'symbol' : ''} ${className}`} role="img" aria-label="Finance Atelier" />;
+}
+
 /* ── Sidebar (solo desktop) ── */
 function Sidebar({ tabs, activeTab, onChange }) {
   /* La piastra attiva scorre fino al bottone scelto. Si misura la posizione
@@ -636,7 +650,7 @@ function Sidebar({ tabs, activeTab, onChange }) {
   return (
     <aside className={`sidebar ${plateY !== null ? 'has-plate' : ''}`} ref={asideRef}>
       {plateY !== null && <span className="side-plate" style={{ transform: `translateY(${plateY}px)` }} aria-hidden="true" />}
-      <div className="sidebar-logo" title="G">G</div>
+      <BrandMark className="sidebar-logo" />
       {tabs.map(t => {
         const Icon = t.icon;
         return (
@@ -699,6 +713,9 @@ function MobileNav({ tabs, activeTab, onChange }) {
               </button>
             );
           })}
+          {/* Sul telefono la barra laterale non c'è: il marchio intero chiude
+              questo foglio, sotto le voci, che restano vicine al pollice */}
+          <div className="sheet-brand"><BrandMark /></div>
         </Sheet>
       )}
     </>
@@ -2767,6 +2784,7 @@ function FinanceDashboard() {
             due righe e occupavano tutta la prima schermata del telefono, senza
             che si vedesse un solo numero. */}
         <header className="mobile-topbar">
+          <BrandMark variant="symbol" className="topbar-mark" />
           <h1>{activeTabLabel}</h1>
           <button className="month-chip" onClick={() => setProfileSheet(true)} aria-haspopup="dialog">
             <Ic.calendar /> {data.profile.month}

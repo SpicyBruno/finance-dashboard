@@ -55,7 +55,11 @@ Open decisions:
 
 ## Brand Commitments
 
-Existing names: "Prospetto Finanziario Personale" (full) and "Finanze" (home-screen name). No other brand commitments have been made.
+Existing names: "Prospetto Finanziario Personale" (full) and "Finanze" (home-screen name).
+
+Logo (October 2026): the lattice symbol from the app icon with the wordmark **FINANCE / ATELIER** stacked underneath. The wordmark is set in Shippori Mincho B1 SemiBold capitals, with both lines justified to the same width. In the app it is gold and follows the theme; the home-screen icon stays coral. The source files are in `brand/`: `symbol.svg` and `lockup.svg` use `currentColor`, and there are fixed-colour SVG and 1024px PNG versions in gold, ink and coral. The symbol sits on a 25×25 module grid with concentric arcs. The app and manifest names did not change.
+
+Type: Hanken Grotesk for the interface and numbers, which use its tabular figures. Shippori Mincho B1 is used for titles and hero numbers. Both are self-hosted in `fonts/` and precached by the service worker, so they work offline.
 
 ## Evidence on Hand
 
