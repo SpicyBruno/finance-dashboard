@@ -1,5 +1,5 @@
 const { useState, useEffect, useMemo, useCallback, useRef } = React;
-const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, RadialBarChart, RadialBar } = Recharts;
+const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar } = Recharts;
 
 /* ── Icons ── */
 const Ic = {
@@ -20,7 +20,6 @@ const Ic = {
   up: ({ size = 12 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15" /></svg>,
   down: ({ size = 12 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9" /></svg>,
   receipt: ({ size = 20 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>,
-  candle: ({ size = 20 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="3" x2="7" y2="21" /><rect x="4" y="7" width="6" height="9" /><line x1="17" y1="3" x2="17" y2="21" /><rect x="14" y="10" width="6" height="7" /></svg>,
   exchange: ({ size = 20 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9" /><path d="M3 11V9a4 4 0 0 1 4-4h14" /><polyline points="7 23 3 19 7 15" /><path d="M21 13v2a4 4 0 0 1-4 4H3" /></svg>,
   edit: ({ size = 14 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>,
   search: ({ size = 14 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>,
@@ -65,6 +64,9 @@ const DEFAULT_DATA = {
   investmentsMeta: {
     targetAllocation: { Equity: 50, Cripto: 10, Pensione: 30, Liquidita: 10 }
   },
+  /* La sezione Mercati (Polymarket) è stata tolta a ottobre 2026. I dati
+     restano nel modello perché le posizioni salvate sopravvivano nel
+     localStorage e nei backup JSON, nel caso la sezione torni. */
   markets: {
     polyPositions: [],
     pnlHistory: [],
@@ -259,13 +261,19 @@ const OUTFLOW = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--ch
 const RETAINED = 'var(--chart-retained)';
 const rampColor = (i, n) => OUTFLOW[Math.min(OUTFLOW.length - 1, Math.round((i / Math.max(1, n - 1)) * (OUTFLOW.length - 1)))];
 
-/* Il numero sale una volta sola, all'ingresso. Con moto ridotto arriva già al
-   valore finale: nessuno stato intermedio da guardare. */
-function useCountUp(target, duration = 700) {
-  const [shown, setShown] = useState(target);
-  const fromRef = useRef(target);
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* Il numero si assesta una volta sola, all'ingresso (`enter`): parte dall'86%
+   e frena sul valore, così le cifre restano leggibili mentre arrivano. Prima
+   partiva già dal valore finale e l'ingresso promesso non avveniva mai. Dopo,
+   anima solo i cambi di valore. Con moto ridotto arriva già al valore finale. */
+function useCountUp(target, enter = false, duration = 700) {
+  const [start] = useState(() => (enter && !prefersReducedMotion() && isFinite(target) && target !== 0 ? target * 0.86 : target));
+  const [shown, setShown] = useState(start);
+  const fromRef = useRef(start);
   useEffect(() => {
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduce = prefersReducedMotion();
     const from = fromRef.current;
     fromRef.current = target;
     if (reduce || from === target || !isFinite(target)) { setShown(target); return; }
@@ -280,6 +288,23 @@ function useCountUp(target, duration = 700) {
     return () => cancelAnimationFrame(raf);
   }, [target, duration]);
   return shown;
+}
+
+/* Riscontro del salvataggio: la riga appena salvata si illumina un attimo e,
+   se è fuori schermo, ci si scorre sopra. Prima il modulo si chiudeva e la
+   voce finiva da qualche parte nell'elenco ordinato per data, senza segno.
+   Le righe portano `data-saved-id`; fra tabella e lista si sceglie quella
+   visibile. */
+function useSavedFlash(duration = 1600) {
+  const [flashId, setFlashId] = useState(null);
+  useEffect(() => {
+    if (flashId === null) return;
+    const el = [...document.querySelectorAll(`[data-saved-id="${flashId}"]`)].find(n => n.offsetParent !== null);
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    const t = setTimeout(() => setFlashId(null), duration);
+    return () => clearTimeout(t);
+  }, [flashId, duration]);
+  return [flashId, setFlashId];
 }
 
 /* Recharts vuole un'altezza numerica, non un clamp CSS: senza questo i
@@ -322,6 +347,11 @@ const fmtTick = (v) => {
   return `${Math.round(n)}€`;
 };
 
+/* Un solo passo per tutti i grafici. Il default di Recharts (1,5 s, ease) si
+   ripeteva a ogni tasto premuto nei parametri del mutuo e ignorava la
+   preferenza di moto ridotto. */
+const CHART_ANIM = { isAnimationActive: !prefersReducedMotion(), animationDuration: 650, animationEasing: 'ease-out' };
+
 /* Un solo stile per i tooltip: prima era ricopiato identico in quattro
    posti. Il cursore di Recharts era un rettangolo grigio chiaro (#ccc) che
    sul tema scuro accecava a ogni passaggio. */
@@ -353,7 +383,7 @@ function Donut({ data, colors, height, center }) {
     <div className="donut-box" style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
-          <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="66%" outerRadius="94%"
+          <Pie {...CHART_ANIM} data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius="66%" outerRadius="94%"
             paddingAngle={2} stroke="var(--card-solid)" strokeWidth={2}>
             {data.map((d, i) => <Cell key={d.name + i} fill={colors[i % colors.length]} />)}
           </Pie>
@@ -388,11 +418,19 @@ function DonutLegend({ data, colors }) {
    scala grande e accanto il dato che lo spiega. Prima le altre sezioni
    aprivano con quattro riquadri identici in fila, e niente contava più di
    niente. */
+/* Il momento d'autore: la prima volta che si apre una sezione, il suo hero si
+   assesta (numero, barre, arco, sparkline) come inchiostro d'oro che si
+   posa. Le visite successive lo trovano già fermo: rivederlo a ogni cambio di
+   scheda sarebbe solo attesa. */
+const settledHeroes = new Set();
+
 function PageHero({ label, value, format = fmt, tone, meta, aside, foot, footClass = '' }) {
   const numeric = typeof value === 'number' && isFinite(value);
-  const shown = useCountUp(numeric ? value : 0);
+  const [settle] = useState(() => !settledHeroes.has(label));
+  useEffect(() => { settledHeroes.add(label); }, [label]);
+  const shown = useCountUp(numeric ? value : 0, settle);
   return (
-    <section className="card-hero reveal">
+    <section className={`card-hero reveal ${settle ? 'settle' : ''}`}>
       <div className={aside ? 'hero-grid' : undefined}>
         <div>
           <div className="hero-label">{label}</div>
@@ -441,7 +479,7 @@ function PartBars({ title, parts, total }) {
   return (
     <div>
       {title && <div className="aside-label">{title}</div>}
-      {parts.map(p => {
+      {parts.map((p, i) => {
         const fill = p.fill !== undefined ? p.fill : p.value / Math.max(1, total);
         const share = p.share !== undefined ? p.share : fmtPct(p.value / Math.max(1, total));
         return (
@@ -451,7 +489,7 @@ function PartBars({ title, parts, total }) {
               <span className="part-value">{p.display !== undefined ? p.display : fmt(p.value)}{share && <span className="part-share">{share}</span>}</span>
             </div>
             <div className="progress-track" style={{ height: 6 }}>
-              <div className="progress-fill" style={{ '--fill': Math.max(0, Math.min(1, fill)), background: p.color }} />
+              <div className="progress-fill" style={{ '--fill': Math.max(0, Math.min(1, fill)), '--i': i, background: p.color }} />
               {p.target !== undefined && <span className="target-tick" style={{ left: `${Math.max(0, Math.min(100, p.target))}%` }} />}
             </div>
           </div>
@@ -505,9 +543,12 @@ function ArcMeter({ pct: rawPct, color, size = 62 }) {
     <svg width={size} height={size} aria-hidden="true" style={{ flexShrink: 0 }}>
       <circle cx={cx} cy={cy} r={r} fill="none" stroke="var(--border)" strokeWidth="5" />
       {/* A zero l'arco non si disegna: il capo arrotondato lasciava un puntino */}
+      {/* Disegnato con dashoffset, non con la lunghezza del tratto: così
+          l'ingresso può far correre l'arco da zero (vedi .settle .arc-fill) */}
       {pct > 0 && (
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="5" strokeLinecap="round"
-          strokeDasharray={`${(circ * pct).toFixed(1)} ${circ.toFixed(1)}`}
+        <circle className="arc-fill" cx={cx} cy={cy} r={r} fill="none" stroke={color} strokeWidth="5" strokeLinecap="round"
+          strokeDasharray={circ.toFixed(1)} strokeDashoffset={(circ * (1 - pct)).toFixed(1)}
+          style={{ '--arc-circ': circ.toFixed(1) }}
           transform={`rotate(-90 ${cx} ${cy})`} />
       )}
     </svg>
@@ -574,35 +615,27 @@ function Toast({ message }) {
   return <div className="toast">{message}</div>;
 }
 
-/* ── RadialGauge ── */
-function RadialGauge({ value, max = 1, label, sub, color = C.gold, size = 160 }) {
-  const pct = Math.max(0, Math.min(1, max > 0 ? value / max : 0));
-  const data = [{ name: 'v', value: pct * 100, fill: color }];
-  return (
-    <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: size }}>
-      <ResponsiveContainer width="100%" height={size}>
-        <RadialBarChart cx="50%" cy="50%" innerRadius="72%" outerRadius="100%" barSize={12} data={data} startAngle={220} endAngle={-40}>
-          <defs>
-            <linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity="1" />
-              <stop offset="100%" stopColor={color} stopOpacity="0.55" />
-            </linearGradient>
-          </defs>
-          <RadialBar dataKey="value" cornerRadius={8} fill="url(#gaugeGrad)" background={false} />
-          <Tooltip contentStyle={{ display: 'none' }} />
-        </RadialBarChart>
-      </ResponsiveContainer>
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', textAlign: 'center' }}>
-        <div className="display-font number-display" style={{ fontSize: 32, color: color, lineHeight: 1 }}>{label}</div>
-        {sub && <div className="mono-font" style={{ fontSize: 11, color: C.textDim, marginTop: 6, letterSpacing: '0.08em' }}>{sub}</div>}
-      </div>
-    </div>
-  );
-}
+
 /* ── Sidebar (solo desktop) ── */
 function Sidebar({ tabs, activeTab, onChange }) {
+  /* La piastra attiva scorre fino al bottone scelto. Si misura la posizione
+     reale del bottone invece di dedurla da altezze fisse. */
+  const asideRef = useRef(null);
+  const [plateY, setPlateY] = useState(null);
+  React.useLayoutEffect(() => {
+    // Sotto i 780px la barra è nascosta (offsetParent nullo): niente piastra,
+    // e si rimisura quando la finestra torna larga
+    const measure = () => {
+      const btn = asideRef.current && asideRef.current.querySelector('.side-btn.active');
+      setPlateY(btn && btn.offsetParent ? btn.offsetTop : null);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [activeTab]);
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${plateY !== null ? 'has-plate' : ''}`} ref={asideRef}>
+      {plateY !== null && <span className="side-plate" style={{ transform: `translateY(${plateY}px)` }} aria-hidden="true" />}
       <div className="sidebar-logo" title="G">G</div>
       {tabs.map(t => {
         const Icon = t.icon;
@@ -630,9 +663,13 @@ function MobileNav({ tabs, activeTab, onChange }) {
   const secondary = tabs.filter(t => !PRIMARY_TABS.includes(t.id));
   const inSheet = secondary.some(t => t.id === activeTab);
   const shortLabel = { overview: 'Quadro', transactions: 'Movimenti', investments: 'Investim.', projection: 'Proiezioni' };
+  const activeIndex = inSheet ? primary.length : Math.max(0, primary.findIndex(t => t.id === activeTab));
   return (
     <>
       <nav className="mobile-nav" aria-label="Sezioni">
+        {/* Un solo segno attivo che scorre da una voce all'altra: dice da dove
+            si arriva, non solo dove si è */}
+        <span className="nav-indicator" style={{ '--i': activeIndex }} aria-hidden="true" />
         {primary.map(t => {
           const Icon = t.icon;
           return (
@@ -1120,6 +1157,7 @@ const shortMonthLabel = (key) => {
 function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
   const [form, setForm] = useState({ month: currentISO || '', netto: '', note: '' });
   const [err, setErr] = useState('');
+  const [flashId, flash] = useSavedFlash();
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(null); // null | { msg, pct }
   const [importErr, setImportErr] = useState('');
@@ -1184,7 +1222,9 @@ function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
       setConfirmErr(`C'è già un cedolino per ${itMonthLabel(confirmData.month)}: eliminalo dall'elenco prima di importarne un altro.`);
       return;
     }
-    onAdd({ id: Date.now(), month: confirmData.month, netto: Math.round(n * 100) / 100, note: confirmData.note });
+    const id = Date.now();
+    onAdd({ id, month: confirmData.month, netto: Math.round(n * 100) / 100, note: confirmData.note });
+    flash(id);
     setConfirmData(null); setConfirmErr('');
     showToast && showToast('Cedolino importato dal documento');
   };
@@ -1196,7 +1236,9 @@ function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
     const nettoNum = Number(String(form.netto).replace(',', '.'));
     if (!nettoNum || nettoNum <= 0) { setErr('Inserisci un netto valido'); return; }
     if (cedolini.find(c => c.month === form.month)) { setErr('Cedolino già presente per questo mese'); return; }
-    onAdd({ id: Date.now(), month: form.month, netto: nettoNum, note: form.note });
+    const id = Date.now();
+    onAdd({ id, month: form.month, netto: nettoNum, note: form.note });
+    flash(id);
     setForm(f => ({ ...f, netto: '', note: '' }));
     setErr('');
   };
@@ -1213,7 +1255,7 @@ function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
     return i > 0 ? c.netto - sorted[i - 1].netto : null;
   };
   const deltaText = (d) => d === null ? '—' : `${d >= 0 ? '+' : '−'}${fmt(Math.abs(d))}`;
-  const deltaColor = (d) => d === null ? C.textMuted : d >= 0 ? C.sage : C.rust;
+  const deltaColor = (d) => d === null ? C.textDim : d >= 0 ? C.sage : C.rust;
 
   return (
     <div className="bento">
@@ -1385,7 +1427,7 @@ function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
               <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick}
                 domain={[min => Math.max(0, Math.floor((min * 0.92) / 100) * 100), max => Math.ceil((max * 1.04) / 100) * 100]} />
               <Tooltip {...TT_LINE} formatter={v => [fmt(v), 'Netto']} />
-              <Line type="monotone" dataKey="netto" stroke={C.gold} strokeWidth={2.5} dot={{ r: scale.narrow ? 3 : 5, fill: C.gold }} name="Netto" />
+              <Line {...CHART_ANIM} type="monotone" dataKey="netto" stroke={C.gold} strokeWidth={2.5} dot={{ r: scale.narrow ? 3 : 5, fill: C.gold }} name="Netto" />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -1419,8 +1461,8 @@ function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
                     const delta = deltaOf(c);
                     const isActive = c.month === currentISO;
                     return (
-                      <tr key={c.id} style={{ borderBottom: `1px solid ${C.border}`, background: isActive ? 'var(--accent-subtle)' : 'transparent' }}>
-                        <td className="mono-font" style={{ padding: '12px 8px', color: isActive ? C.gold : C.text }}>{c.month}</td>
+                      <tr key={c.id} data-saved-id={c.id} className={c.id === flashId ? 'just-saved' : undefined} style={{ borderBottom: `1px solid ${C.border}`, background: isActive ? 'var(--accent-subtle)' : 'transparent' }}>
+                        <td style={{ padding: '12px 8px', color: isActive ? C.gold : C.text }}>{itMonthLabel(c.month)}</td>
                         <td className="mono-font" style={{ padding: '12px 8px', color: C.gold, fontWeight: 600 }}>{fmt(c.netto)}</td>
                         <td className="mono-font" style={{ padding: '12px 8px', color: deltaColor(delta) }}>{deltaText(delta)}</td>
                         <td style={{ padding: '12px 8px' }}>
@@ -1444,7 +1486,7 @@ function CedoliniTab({ cedolini, onAdd, onRemove, currentISO, showToast }) {
                 const delta = deltaOf(c);
                 const isActive = c.month === currentISO;
                 return (
-                  <div key={c.id} className={`m-row ${isActive ? 'is-active' : ''}`}>
+                  <div key={c.id} data-saved-id={c.id} className={`m-row ${isActive ? 'is-active' : ''} ${c.id === flashId ? 'just-saved' : ''}`}>
                     <div style={{ minWidth: 0 }}>
                       <div className="m-row-title">{itMonthLabel(c.month)}</div>
                       <div className="m-row-sub">
@@ -1563,14 +1605,20 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
 
       {/* Performance per posizione */}
       <div className="bento-card span-7">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span>Performance per posizione</span></span></h3>
+        <h3 className="card-title"><span><span className="diamond">◆</span><span>Performance per posizione</span></span><span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>tacca = capitale versato</span></h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {investments.map(inv => {
             const cv = Number(inv.current || 0);
             const ev = Number(inv.entryValue || 0);
             const roi = ev > 0 ? ((cv - ev) / ev) * 100 : 0;
-            const progressMax = Math.max(cv, ev, 1);
+            /* Barra = valore attuale sulla scala della posizione più grande,
+               tacca = capitale versato. Prima la barra era il rapporto attuale/
+               capitale tagliato a 100%: piena per qualunque guadagno, anche
+               +0,00%, e quindi muta. Ora il guadagno è la barra che supera la
+               tacca, la perdita quella che non ci arriva. */
+            const progressMax = Math.max(1, ...investments.map(i => Math.max(Number(i.current || 0), Number(i.entryValue || 0))));
             const progressPct = (cv / progressMax) * 100;
+            const capitalPct = (ev / progressMax) * 100;
             const roiColor = ev === 0 ? C.textMuted : roi >= 0 ? C.sage : C.rust;
             const typeColor = TYPE_COLORS[inv.type] || C.gold;
             return (
@@ -1587,6 +1635,7 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
                 </div>
                 <div className="progress-track" style={{ height: 10 }}>
                   <div className="progress-fill" style={{ '--fill': (progressPct) / 100, background: roi >= 0 ? `linear-gradient(90deg, ${C.goldDim}, ${C.sage})` : `linear-gradient(90deg, ${C.rust}, ${C.goldDim})` }} />
+                  {ev > 0 && <span className="target-tick" style={{ left: `${capitalPct}%` }} />}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px 12px', marginTop: 8, fontSize: 11 }} className="mono-font">
                   <span style={{ color: C.textDim }}>Attuale {fmt(cv)} · Capitale {fmt(ev)}</span>
@@ -1608,8 +1657,8 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
             <XAxis dataKey="name" {...scale.axis} interval={0} />
             <YAxis {...scale.axis} width={scale.narrow ? 34 : 40} tickFormatter={v => `${v}%`} />
             <Tooltip {...TT_BAR} formatter={(v) => `${v}%`} />
-            <Bar dataKey="Attuale" fill={C.gold} radius={[4, 4, 0, 0]} />
-            <Bar dataKey="Target" fill={C.sage} radius={[4, 4, 0, 0]} />
+            <Bar {...CHART_ANIM} dataKey="Attuale" fill={C.gold} radius={[4, 4, 0, 0]} />
+            <Bar {...CHART_ANIM} dataKey="Target" fill={C.sage} radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
         <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 100px), 1fr))', gap: 10, alignItems: 'end' }}>
@@ -1748,418 +1797,6 @@ function InvestmentsTab({ data, totals, onUpdateField, onAddItem, onRemoveItem, 
   );
 }
 
-/* ── Sentiment Panel ── */
-function SentimentPanel({ onPrefill }) {
-  const [fng, setFng] = React.useState({ data: null, error: null, loading: true });
-  const [poly, setPoly] = React.useState({ data: null, error: null, loading: true });
-  const scale = useChartScale();
-
-  React.useEffect(() => {
-    const ctrl = new AbortController();
-    fetch('https://api.alternative.me/fng/?limit=7', { signal: ctrl.signal })
-      .then(r => r.ok ? r.json() : Promise.reject('http'))
-      .then(j => {
-        const arr = (j.data || []).slice().reverse().map(d => ({
-          date: new Date(Number(d.timestamp) * 1000).toISOString().slice(5, 10),
-          value: Number(d.value),
-          classification: d.value_classification
-        }));
-        setFng({ data: arr, error: null, loading: false });
-      })
-      .catch(e => {
-        if (e.name !== 'AbortError') setFng({ data: null, error: true, loading: false });
-      });
-    return () => ctrl.abort();
-  }, []);
-
-  React.useEffect(() => {
-    const ctrl = new AbortController();
-    fetch('https://gamma-api.polymarket.com/markets?limit=10&active=true&closed=false', { signal: ctrl.signal })
-      .then(r => r.ok ? r.json() : Promise.reject('http'))
-      .then(j => {
-        const list = (Array.isArray(j) ? j : (j.data || [])).slice(0, 10).map(m => {
-          let yes = null;
-          try {
-            const prices = typeof m.outcomePrices === 'string' ? JSON.parse(m.outcomePrices) : m.outcomePrices;
-            if (Array.isArray(prices) && prices.length > 0) yes = Number(prices[0]);
-          } catch { }
-          return { id: m.id || m.conditionId, question: m.question || m.slug, yes, volume: m.volume ? Number(m.volume) : null, endDate: m.endDate || m.end_date_iso || '' };
-        });
-        setPoly({ data: list, error: null, loading: false });
-      })
-      .catch(e => {
-        if (e.name !== 'AbortError') setPoly({ data: null, error: true, loading: false });
-      });
-    return () => ctrl.abort();
-  }, []);
-
-  const fngCurrent = fng.data && fng.data.length > 0 ? fng.data[fng.data.length - 1] : null;
-  const fngColor = (v) => v <= 25 ? C.danger : v <= 45 ? C.rust : v <= 55 ? C.gold : v <= 75 ? '#a0c774' : C.sage;
-  const fngLabel = (v) => v <= 25 ? 'Extreme Fear' : v <= 45 ? 'Fear' : v <= 55 ? 'Neutral' : v <= 75 ? 'Greed' : 'Extreme Greed';
-
-  return (
-    <div className="bento-card span-12">
-      <h3 className="card-title"><span><span className="diamond">◆</span><span>Sentiment & feed live</span></span></h3>
-      {/* min(100%, 320px): a 360px la colonna minima di 320px sfondava la scheda */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 20 }}>
-
-        {/* Fear & Greed */}
-        <div style={{ minWidth: 0 }}>
-          <div className="card-eyebrow" style={{ marginBottom: 12 }}>Crypto Fear & Greed (alternative.me)</div>
-          {fng.loading && <div style={{ color: C.textMuted, fontSize: 12 }}>Caricamento…</div>}
-          {fng.error && <div style={{ color: C.rust, fontSize: 12 }}>Dati non disponibili offline.</div>}
-          {fngCurrent && (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 14 }}>
-                <RadialGauge value={fngCurrent.value} max={100} label={fngCurrent.value} sub={fngLabel(fngCurrent.value).toUpperCase()} color={fngColor(fngCurrent.value)} size={140} />
-              </div>
-              <ResponsiveContainer width="100%" height={120}>
-                <LineChart data={fng.data} margin={scale.margin}>
-                  <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
-                  <XAxis dataKey="date" {...scale.axis} minTickGap={scale.minTickGap} />
-                  <YAxis {...scale.axis} width={30} domain={[0, 100]} />
-                  <Tooltip {...TT_LINE} />
-                  <Line type="monotone" dataKey="value" stroke={C.gold} strokeWidth={2} dot={{ r: 3, fill: C.gold }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </>
-          )}
-        </div>
-
-        {/* Polymarket top */}
-        <div style={{ minWidth: 0 }}>
-          <div className="card-eyebrow" style={{ marginBottom: 12 }}>Top 10 mercati Polymarket</div>
-          {poly.loading && <div style={{ color: C.textMuted, fontSize: 12 }}>Caricamento…</div>}
-          {poly.error && <div style={{ color: C.rust, fontSize: 12 }}>Feed non disponibile. Inserisci posizioni manualmente.</div>}
-          {poly.data && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 380, overflowY: 'auto' }}>
-              {poly.data.length === 0 && <div style={{ color: C.textMuted, fontSize: 12 }}>Nessun mercato attivo.</div>}
-              {poly.data.map((m, i) => {
-                const yesPct = m.yes != null ? (m.yes <= 1 ? m.yes * 100 : m.yes) : null;
-                return (
-                  <div key={m.id || i} style={{ border: `1px solid ${C.border}`, padding: 10, borderRadius: 6, display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.question}</div>
-                      <div className="mono-font" style={{ fontSize: 10, color: C.textMuted, marginTop: 3 }}>
-                        {yesPct != null ? `YES ${yesPct.toFixed(1)}%` : 'YES n/d'}
-                        {m.volume != null ? ` · vol ${(m.volume / 1000).toFixed(1)}k` : ''}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => onPrefill({ market: m.question, outcome: 'YES', currency: 'USDC', entryProb: yesPct != null ? Math.max(1, Math.min(99, Math.round(yesPct))) : 50, currentProb: yesPct != null ? Math.max(1, Math.min(99, Math.round(yesPct))) : 50, deadline: (m.endDate || '').slice(0, 10) })}
-                      style={{ background: 'transparent', border: `1px solid ${C.goldDim}`, color: C.gold, padding: '4px 10px', fontSize: 11, letterSpacing: '0.06em', cursor: 'pointer', borderRadius: 6, whiteSpace: 'nowrap' }}>
-                      + Watchlist
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ── Markets Tab ── */
-const POSITION_STATUSES = ['Aperta', 'Chiusa', 'Vinta', 'Persa'];
-
-function MarketsTab({ markets, onAdd, onUpdate, onRemove, onClose, onUpdateRate }) {
-  const [form, setForm] = React.useState({ market: '', outcome: 'YES', currency: 'USDC', capitalRisked: '', entryProb: '', currentProb: '', deadline: '', note: '' });
-  const [err, setErr] = React.useState('');
-  const formRef = React.useRef(null);
-  const scale = useChartScale();
-
-  const handlePrefill = React.useCallback((p) => {
-    setForm(f => ({ ...f, ...p, capitalRisked: f.capitalRisked, note: f.note }));
-    setErr('');
-    if (formRef.current) formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, []);
-
-  const handleAdd = () => {
-    const cap = Number(form.capitalRisked);
-    const ep = Number(form.entryProb);
-    const cp = Number(form.currentProb);
-    if (!form.market.trim()) { setErr('Inserisci nome mercato'); return; }
-    if (!(cap > 0)) { setErr('Capitale deve essere > 0'); return; }
-    if (!(ep >= 1 && ep <= 99)) { setErr('Probabilità ingresso 1-99'); return; }
-    if (!(cp >= 1 && cp <= 99)) { setErr('Probabilità attuale 1-99'); return; }
-    onAdd({
-      market: form.market.trim(),
-      outcome: form.outcome.trim() || 'YES',
-      currency: form.currency,
-      capitalRisked: cap,
-      entryProb: ep,
-      currentProb: cp,
-      status: 'Aperta',
-      deadline: form.deadline,
-      note: form.note
-    });
-    setForm({ market: '', outcome: 'YES', currency: 'USDC', capitalRisked: '', entryProb: '', currentProb: '', deadline: '', note: '' });
-    setErr('');
-  };
-
-  const positions = markets.polyPositions || [];
-  const open = positions.filter(p => p.status === 'Aperta');
-  const won = positions.filter(p => p.status === 'Vinta');
-  const lost = positions.filter(p => p.status === 'Persa');
-
-  const rate = Number(markets.eurUsdRate) || 1;
-  const openEur = open.filter(p => p.currency === 'EUR').reduce((s, p) => s + Number(p.capitalRisked || 0), 0);
-  const openUsd = open.filter(p => p.currency === 'USDC').reduce((s, p) => s + Number(p.capitalRisked || 0), 0);
-  const openUsdInEur = openUsd / rate;
-  const totalRiskEur = openEur + openUsdInEur;
-
-  const realizedPnl = positions.reduce((s, p) => {
-    if (p.status === 'Vinta') return s + p.capitalRisked * ((100 - p.entryProb) / Math.max(1, p.entryProb));
-    if (p.status === 'Persa') return s - p.capitalRisked;
-    return s;
-  }, 0);
-
-  const unrealizedPnl = open.reduce((s, p) => s + p.capitalRisked * ((p.currentProb - p.entryProb) / Math.max(1, p.entryProb)), 0);
-  const closedCount = won.length + lost.length;
-  const winRate = closedCount > 0 ? (won.length / closedCount) * 100 : 0;
-
-  const positionPnl = (p) => {
-    const delta = p.currentProb - p.entryProb;
-    if (p.status === 'Aperta') return p.capitalRisked * (delta / Math.max(1, p.entryProb));
-    if (p.status === 'Vinta') return p.capitalRisked * ((100 - p.entryProb) / Math.max(1, p.entryProb));
-    if (p.status === 'Persa') return -p.capitalRisked;
-    return 0;
-  };
-  const money = (p, v) => p.currency === 'USDC' ? fmtUSD(v) : fmtEUR2(v);
-  const signed = (v) => `${v >= 0 ? '+' : ''}${fmtEUR2(v)}`;
-  const labelStyle = { fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase', display: 'block', marginBottom: 6 };
-
-  return (
-    <div className="bento">
-
-      {/* Il risultato prima del modulo: prima la scheda si apriva con nove
-          campi vuoti e i numeri arrivavano solo dopo una schermata intera */}
-      <PageHero label="P&L realizzato" value={realizedPnl} format={signed}
-        tone={realizedPnl >= 0 ? C.sage : C.rust}
-        meta={<span>{won.length} vinte · {lost.length} perse · {open.length} aperte</span>}
-        aside={(
-          <div className="arc-stat">
-            <ArcMeter pct={winRate / 100} color={closedCount === 0 ? C.textMuted : winRate >= 50 ? C.sage : C.rust} size={84} />
-            <div>
-              <div className="aside-label" style={{ marginBottom: 6 }}>Win rate</div>
-              <div className="stat-value" style={{ color: closedCount === 0 ? C.textDim : winRate >= 50 ? C.sage : C.rust }}>{winRate.toFixed(1)}%</div>
-              <div className="stat-hint">{closedCount === 0 ? 'nessuna posizione chiusa' : `su ${closedCount} chiuse`}</div>
-            </div>
-          </div>
-        )} />
-
-      <StatStrip items={[
-        { label: 'Capitale a rischio (aperte)', value: fmt(totalRiskEur), color: C.gold, hint: `EUR ${fmtEUR2(openEur)} · USDC ${fmtUSD(openUsd)}` },
-        { label: 'P&L non realizzato', value: signed(unrealizedPnl), color: unrealizedPnl >= 0 ? C.sage : C.rust, hint: 'mark-to-market aperte' }
-      ]} />
-
-      {/* Positions */}
-      <div className="bento-card span-12">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span>Posizioni</span></span><span className="mono-font" style={{ fontSize: 11, color: C.textMuted }}>{positions.length} totali</span></h3>
-        {positions.length === 0 ? (
-          <div style={{ padding: '32px 12px', textAlign: 'center', color: C.textMuted }}>
-            <p>Nessuna posizione. Aggiungine una dal modulo qui sotto o dalla watchlist Polymarket.</p>
-          </div>
-        ) : (
-          <>
-            <div className="desktop-table" style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 900 }}>
-                <thead>
-                  <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                    {['Mercato', 'Outcome', 'Val.', 'Capitale', 'Prob. ingr', 'Prob. att', 'Δ', 'Quota', 'P&L stim', 'Scad.', 'Stato', ''].map(h => (
-                      <th key={h} style={{ textAlign: 'left', padding: '8px 6px', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.12em', color: C.textMuted, fontWeight: 500 }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.map(p => {
-                    const delta = p.currentProb - p.entryProb;
-                    const quota = (100 / Math.max(1, p.entryProb)).toFixed(2);
-                    const isOpen = p.status === 'Aperta';
-                    const pnl = positionPnl(p);
-                    const rowBg = p.status === 'Vinta' ? 'rgba(107,142,111,0.10)'
-                      : p.status === 'Persa' ? 'rgba(197,69,69,0.10)'
-                        : (isOpen && p.currentProb > p.entryProb) ? 'var(--accent-soft)'
-                          : 'transparent';
-                    return (
-                      <tr key={p.id} className="data-row" style={{ borderBottom: `1px solid ${C.border}`, background: rowBg }}>
-                        <td style={{ padding: '8px 6px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: C.text }}>{p.market}</td>
-                        <td className="mono-font" style={{ padding: '8px 6px', color: C.textDim }}>{p.outcome}</td>
-                        <td className="mono-font" style={{ padding: '8px 6px', color: C.textDim }}>{p.currency}</td>
-                        <td className="mono-font" style={{ padding: '8px 6px', color: C.gold }}>{money(p, p.capitalRisked)}</td>
-                        <td className="mono-font" style={{ padding: '8px 6px' }}>{p.entryProb}%</td>
-                        <td style={{ padding: '4px 6px', width: 70 }}>
-                          <input type="number" className="input-cell mono-font" value={p.currentProb} onChange={e => onUpdate(p.id, 'currentProb', e.target.value)} style={{ fontSize: 12, padding: '4px 2px', textAlign: 'right' }} aria-label="Probabilità attuale" />
-                        </td>
-                        <td className="mono-font" style={{ padding: '8px 6px', color: delta >= 0 ? C.sage : C.rust }}>{delta >= 0 ? '+' : ''}{delta.toFixed(0)}</td>
-                        <td className="mono-font" style={{ padding: '8px 6px', color: C.textDim }}>{quota}x</td>
-                        <td className="mono-font" style={{ padding: '8px 6px', color: pnl >= 0 ? C.sage : C.rust }}>{pnl >= 0 ? '+' : ''}{money(p, pnl)}</td>
-                        <td className="mono-font" style={{ padding: '8px 6px', color: C.textMuted, fontSize: 11 }}>{p.deadline || '—'}</td>
-                        <td style={{ padding: '4px 6px' }}>
-                          <select value={p.status} onChange={e => onClose(p.id, e.target.value)} className="input-cell" style={{ background: C.card, fontSize: 11, padding: '4px 2px' }} aria-label="Stato">
-                            {POSITION_STATUSES.map(s => <option key={s}>{s}</option>)}
-                          </select>
-                        </td>
-                        <td style={{ padding: '8px 6px' }}>
-                          <button className="tx-action-btn danger" onClick={() => onRemove(p.id)} aria-label={`Elimina ${p.market}`}><Ic.trash /></button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {/* Telefono: una scheda per posizione invece di dodici colonne da
-                scorrere di lato */}
-            <div className="phone-list">
-              {positions.map(p => {
-                const pnl = positionPnl(p);
-                const quota = (100 / Math.max(1, p.entryProb)).toFixed(2);
-                return (
-                  <div key={p.id} className="m-card">
-                    <div className="m-row-top">
-                      <div className="m-row-title">{p.market}</div>
-                      <span className="m-row-value" style={{ color: pnl >= 0 ? C.sage : C.rust }}>{pnl >= 0 ? '+' : ''}{money(p, pnl)}</span>
-                    </div>
-                    <div className="m-row-sub">
-                      {p.outcome} · {money(p, p.capitalRisked)} · quota {quota}x{p.deadline ? ` · scad. ${p.deadline}` : ''}
-                    </div>
-                    <div className="m-card-controls">
-                      <label className="m-field"><span>Prob. att. (ingr. {p.entryProb}%)</span>
-                        <input type="number" inputMode="decimal" className="input-cell" value={p.currentProb} onChange={e => onUpdate(p.id, 'currentProb', e.target.value)} /></label>
-                      <label className="m-field"><span>Stato</span>
-                        <select value={p.status} onChange={e => onClose(p.id, e.target.value)} className="input-cell" style={{ background: C.card }}>
-                          {POSITION_STATUSES.map(s => <option key={s}>{s}</option>)}
-                        </select></label>
-                      <button className="tx-action-btn danger" onClick={() => onRemove(p.id)} aria-label={`Elimina ${p.market}`}><Ic.trash /></button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Form */}
-      <div className="bento-card span-12" ref={formRef} style={{ scrollMarginTop: 80 }}>
-        <h3 className="card-title"><span><span className="diamond">◆</span><span>Aggiungi posizione</span></span></h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 140px), 1fr))', gap: 14, alignItems: 'end' }}>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={labelStyle}>Mercato</label>
-            <input className="input-cell" placeholder="Es. Trump wins 2028" value={form.market} onChange={e => setForm(f => ({ ...f, market: e.target.value }))} />
-          </div>
-          <div>
-            <label style={labelStyle}>Outcome</label>
-            <input className="input-cell" placeholder="YES / NO" value={form.outcome} onChange={e => setForm(f => ({ ...f, outcome: e.target.value }))} />
-          </div>
-          <div>
-            <label style={labelStyle}>Valuta</label>
-            <select className="input-cell" value={form.currency} onChange={e => setForm(f => ({ ...f, currency: e.target.value }))} style={{ background: C.card }}>
-              <option>USDC</option><option>EUR</option>
-            </select>
-          </div>
-          <div>
-            <label style={labelStyle}>Capitale</label>
-            <input type="number" inputMode="decimal" className="input-cell" placeholder="100" value={form.capitalRisked} onChange={e => setForm(f => ({ ...f, capitalRisked: e.target.value }))} style={{ textAlign: 'right' }} />
-          </div>
-          <div>
-            <label style={labelStyle}>Prob. ingresso %</label>
-            <input type="number" inputMode="decimal" className="input-cell" placeholder="35" value={form.entryProb} onChange={e => setForm(f => ({ ...f, entryProb: e.target.value }))} style={{ textAlign: 'right' }} />
-          </div>
-          <div>
-            <label style={labelStyle}>Prob. attuale %</label>
-            <input type="number" inputMode="decimal" className="input-cell" placeholder="42" value={form.currentProb} onChange={e => setForm(f => ({ ...f, currentProb: e.target.value }))} style={{ textAlign: 'right' }} />
-          </div>
-          <div>
-            <label style={labelStyle}>Scadenza</label>
-            <input type="date" className="input-cell" value={form.deadline} onChange={e => setForm(f => ({ ...f, deadline: e.target.value }))} />
-          </div>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <label style={labelStyle}>Note</label>
-            <input className="input-label" placeholder="Tesi, fonte, link…" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
-          </div>
-          <button className="btn-primary" onClick={handleAdd} style={{ justifyContent: 'center' }}>
-            <Ic.plus /> Aggiungi
-          </button>
-        </div>
-        {err && <div className="inline-error" role="alert"><Ic.alert size={15} /><span>{err}</span></div>}
-      </div>
-
-      {/* Kelly panel */}
-      <div className="bento-card span-6">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span>Kelly Criterion (posizioni aperte)</span></span></h3>
-        {open.length === 0 ? (
-          <div style={{ color: C.textMuted, fontSize: 12, padding: 20, textAlign: 'center' }}>Nessuna posizione aperta.</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {open.map(p => {
-              const ep = p.entryProb;
-              const cp = p.currentProb;
-              const b = (100 / ep) - 1;
-              const pp = cp / 100;
-              const q = 1 - pp;
-              const f = b > 0 ? (b * pp - q) / b : -1;
-              return (
-                <div key={p.id} style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: 10 }}>
-                  <div style={{ fontSize: 12, color: C.text, marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.market}</div>
-                  {f <= 0 ? (
-                    <div className="mono-font" style={{ fontSize: 11, color: C.rust }}>Non scommettere (EV negativo)</div>
-                  ) : (
-                    <div className="mono-font" style={{ fontSize: 11, color: C.sage }}>
-                      Kelly: {(f * 100).toFixed(1)}% del bankroll · Half-Kelly: {(f * 50).toFixed(1)}%
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <p style={{ marginTop: 12, fontSize: 11, color: C.textMuted, lineHeight: 1.5 }}>
-          Kelly indica la dimensione ottimale teorica della posizione per massimizzare la crescita del bankroll nel lungo periodo. Valori alti vanno dimezzati (Half-Kelly) per prudenza.
-        </p>
-      </div>
-
-      {/* P&L chart */}
-      <div className="bento-card span-6 chart-card">
-        <h3 className="card-title"><span><span className="diamond">◆</span><span>P&L realizzato cumulativo</span></span></h3>
-        {(!markets.pnlHistory || markets.pnlHistory.length === 0) ? (
-          <div style={{ padding: '32px 12px', textAlign: 'center', color: C.textMuted, fontSize: 12 }}>Chiudi le prime posizioni per vedere il grafico.</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={scale.h(240, 190)}>
-            <LineChart data={markets.pnlHistory} margin={scale.margin}>
-              <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
-              <XAxis dataKey="date" {...scale.axis} minTickGap={scale.minTickGap} />
-              <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick} />
-              <Tooltip {...TT_LINE} formatter={(v) => fmtEUR2(v)} />
-              <Line type="monotone" dataKey="pnl" stroke={C.gold} strokeWidth={2.5} dot={{ r: 4, fill: C.gold }} />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-
-      {/* Sentiment */}
-      <SentimentPanel onPrefill={handlePrefill} />
-
-      {/* EUR/USD */}
-      <div className="bento-card span-12">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-          <div>
-            <label style={labelStyle}>Tasso EUR/USD</label>
-            <input type="number" step="0.0001" inputMode="decimal" className="input-cell mono-font" value={markets.eurUsdRate} onChange={e => onUpdateRate(e.target.value)} style={{ width: 160, textAlign: 'right' }} />
-          </div>
-          <div style={{ fontSize: 11, color: C.textMuted, flex: 1, minWidth: 'min(100%, 220px)' }}>
-            Usato per convertire le posizioni USDC in EUR nei KPI. 1 EUR = {Number(markets.eurUsdRate).toFixed(4)} USD.
-          </div>
-        </div>
-      </div>
-
-    </div>
-  );
-}
-
 /* ══════════ MOVIMENTI (Entrate & Uscite) ══════════ */
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const isIncomeCategory = (cat) => INCOME_CATEGORIES.includes(cat);
@@ -2202,15 +1839,15 @@ function TransactionFilters({ filters, onChange, onReset }) {
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'flex-end' }}>
       <div>
         <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Dal</label>
-        <input type="date" className="input-cell" value={filters.from} onChange={e => set('from', e.target.value)} />
+        <input aria-label="Dal" type="date" className="input-cell" value={filters.from} onChange={e => set('from', e.target.value)} />
       </div>
       <div>
         <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Al</label>
-        <input type="date" className="input-cell" value={filters.to} onChange={e => set('to', e.target.value)} />
+        <input aria-label="Al" type="date" className="input-cell" value={filters.to} onChange={e => set('to', e.target.value)} />
       </div>
       <div>
         <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Tipo</label>
-        <select className="input-cell" value={filters.type} onChange={e => set('type', e.target.value)} style={{ background: C.card }}>
+        <select aria-label="Tipo" className="input-cell" value={filters.type} onChange={e => set('type', e.target.value)} style={{ background: C.card }}>
           <option value="all">Tutti</option>
           <option value="income">Entrate</option>
           <option value="expense">Uscite</option>
@@ -2218,7 +1855,7 @@ function TransactionFilters({ filters, onChange, onReset }) {
       </div>
       <div>
         <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Categoria</label>
-        <select className="input-cell" value={filters.category} onChange={e => set('category', e.target.value)} style={{ background: C.card }}>
+        <select aria-label="Categoria" className="input-cell" value={filters.category} onChange={e => set('category', e.target.value)} style={{ background: C.card }}>
           <option value="all">Tutte</option>
           <optgroup label="Entrate">{INCOME_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</optgroup>
           <optgroup label="Uscite">{EXPENSE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</optgroup>
@@ -2226,7 +1863,7 @@ function TransactionFilters({ filters, onChange, onReset }) {
       </div>
       <div style={{ flex: 1, minWidth: 200 }}>
         <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.14em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Cerca</label>
-        <input type="text" className="input-cell" placeholder="Descrizione o nota…" value={filters.query} onChange={e => set('query', e.target.value)} />
+        <input aria-label="Cerca" type="text" className="input-cell" placeholder="Descrizione o nota…" value={filters.query} onChange={e => set('query', e.target.value)} />
       </div>
       {active && (
         <button className="btn-ghost" onClick={onReset} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 38 }}>
@@ -2246,7 +1883,7 @@ function SortHead({ label, col, sort, onSort, align }) {
   );
 }
 
-function TransactionTable({ rows, sort, onSort, onEdit, onDelete, selectedIds, onToggleRow, onToggleAll, allSelected, someSelected }) {
+function TransactionTable({ rows, sort, onSort, onEdit, onDelete, selectedIds, onToggleRow, onToggleAll, allSelected, someSelected, flashId }) {
   const sel = selectedIds || new Set();
   /* Raggruppamento per mese, non per giorno: in un registro personale i
      movimenti cadono quasi sempre in date distinte, e per giorno si otteneva
@@ -2297,7 +1934,7 @@ function TransactionTable({ rows, sort, onSort, onEdit, onDelete, selectedIds, o
             </tr>
           )}
           {rows.map(t => (
-            <tr key={t.id} className={sel.has(t.id) ? 'selected' : ''}>
+            <tr key={t.id} data-saved-id={t.id} className={`${sel.has(t.id) ? 'selected' : ''} ${t.id === flashId ? 'just-saved' : ''}`}>
               <td className="sel"><input type="checkbox" checked={sel.has(t.id)} onChange={() => onToggleRow && onToggleRow(t.id)} aria-label="Seleziona movimento" /></td>
               <td className="mono-font" style={{ whiteSpace: 'nowrap', color: C.textDim }}>{itDateLabel(t.date)}</td>
               <td><TypeBadge type={t.type} /></td>
@@ -2338,7 +1975,7 @@ function TransactionTable({ rows, sort, onSort, onEdit, onDelete, selectedIds, o
               </div>
             )}
             {g.items.map(t => (
-              <article key={t.id} className={`tx-row ${sel.has(t.id) ? 'selected' : ''}`}>
+              <article key={t.id} data-saved-id={t.id} className={`tx-row ${sel.has(t.id) ? 'selected' : ''} ${t.id === flashId ? 'just-saved' : ''}`}>
                 <input type="checkbox" className="tx-row-check" checked={sel.has(t.id)}
                   onChange={() => onToggleRow && onToggleRow(t.id)} aria-label={`Seleziona ${t.description || 'movimento'}`} />
                 {/* Si tocca la riga per modificarla, ed "Elimina" sta nella
@@ -2432,21 +2069,21 @@ function TransactionModal({ initial, onSave, onClose, onDelete }) {
         <div className="modal-grid">
           <div className="modal-field">
             <label>Importo (€)</label>
-            <input type="number" min="0.01" step="0.01" className="input-cell" placeholder="0,00" value={form.amount} onChange={e => upd('amount', e.target.value)} style={{ textAlign: 'right' }} required />
+            <input aria-label="Importo (€)" type="number" min="0.01" step="0.01" className="input-cell" placeholder="0,00" value={form.amount} onChange={e => upd('amount', e.target.value)} style={{ textAlign: 'right' }} required />
           </div>
           <div className="modal-field">
             <label>Data</label>
-            <input type="date" className="input-cell" value={form.date} onChange={e => upd('date', e.target.value)} required />
+            <input aria-label="Data" type="date" className="input-cell" value={form.date} onChange={e => upd('date', e.target.value)} required />
           </div>
           <div className="modal-field">
             <label>Categoria</label>
-            <select className="input-cell" value={form.category} onChange={e => upd('category', e.target.value)} style={{ background: C.card }}>
+            <select aria-label="Categoria" className="input-cell" value={form.category} onChange={e => upd('category', e.target.value)} style={{ background: C.card }}>
               {catList.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div className="modal-field">
             <label>Metodo di pagamento</label>
-            <select className="input-cell" value={form.paymentMethod} onChange={e => upd('paymentMethod', e.target.value)} style={{ background: C.card }}>
+            <select aria-label="Metodo di pagamento" className="input-cell" value={form.paymentMethod} onChange={e => upd('paymentMethod', e.target.value)} style={{ background: C.card }}>
               {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           </div>
@@ -2454,19 +2091,19 @@ function TransactionModal({ initial, onSave, onClose, onDelete }) {
 
         <div className="modal-field">
           <label>Descrizione</label>
-          <input type="text" className="input-cell" placeholder="Es. Spesa settimanale supermercato" value={form.description} onChange={e => upd('description', e.target.value)} required />
+          <input aria-label="Descrizione" type="text" className="input-cell" placeholder="Es. Spesa settimanale supermercato" value={form.description} onChange={e => upd('description', e.target.value)} required />
         </div>
 
         <div className="modal-field">
           <label>Stato</label>
-          <select className="input-cell" value={form.status} onChange={e => upd('status', e.target.value)} style={{ background: C.card }}>
+          <select aria-label="Stato" className="input-cell" value={form.status} onChange={e => upd('status', e.target.value)} style={{ background: C.card }}>
             {TX_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
 
         <div className="modal-field">
           <label>Note (facoltativo)</label>
-          <textarea className="input-cell" rows={3} placeholder="Dettagli aggiuntivi…" value={form.notes} onChange={e => upd('notes', e.target.value)} style={{ resize: 'vertical' }} />
+          <textarea aria-label="Note (facoltativo)" className="input-cell" rows={3} placeholder="Dettagli aggiuntivi…" value={form.notes} onChange={e => upd('notes', e.target.value)} style={{ resize: 'vertical' }} />
         </div>
 
         {err && <div style={{ color: C.danger, fontSize: 12, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}><Ic.alert size={14} /> {err}</div>}
@@ -2676,6 +2313,7 @@ function TransactionsTab({ data, onAdd, onUpdate, onDelete, onImport, onBulkDele
   const [filters, setFilters] = useState(emptyFilters);
   const [sort, setSort] = useState({ key: 'date', dir: 'desc' });
   const [modal, setModal] = useState(null); // null | { kind:'add'|'edit'|'import', tx? }
+  const [flashId, flash] = useSavedFlash();
   const [selected, setSelected] = useState(() => new Set());
   const [filterSheet, setFilterSheet] = useState(false);
   const activeFilterCount = ['from', 'to', 'query'].filter(k => filters[k]).length
@@ -2733,8 +2371,11 @@ function TransactionsTab({ data, onAdd, onUpdate, onDelete, onImport, onBulkDele
     return true;
   };
   const handleSave = (payload) => {
-    if (modal && modal.kind === 'edit') onUpdate(modal.tx.id, payload); else onAdd(payload);
+    // L'id nasce qui, così la riga nuova si può ritrovare e far brillare
+    const id = modal && modal.kind === 'edit' ? modal.tx.id : Date.now();
+    if (modal && modal.kind === 'edit') onUpdate(id, payload); else onAdd({ ...payload, id });
     setModal(null);
+    flash(id);
   };
 
   return (
@@ -2828,7 +2469,8 @@ function TransactionsTab({ data, onAdd, onUpdate, onDelete, onImport, onBulkDele
         )}
         <TransactionTable rows={sorted} sort={sort} onSort={onSort}
           onEdit={(t) => setModal({ kind: 'edit', tx: t })} onDelete={handleDelete}
-          selectedIds={selected} onToggleRow={toggleRow} onToggleAll={toggleAll} allSelected={allSelected} someSelected={someSelected} />
+          selectedIds={selected} onToggleRow={toggleRow} onToggleAll={toggleAll} allSelected={allSelected} someSelected={someSelected}
+          flashId={flashId} />
       </div>
 
       {modal && (modal.kind === 'add' || modal.kind === 'edit') && (
@@ -2970,60 +2612,6 @@ function FinanceDashboard() {
     }));
   }, []);
 
-  const addPolyPosition = useCallback((pos) => {
-    setData(prev => ({
-      ...prev,
-      markets: { ...prev.markets, polyPositions: [...prev.markets.polyPositions, { ...pos, id: Date.now() }] }
-    }));
-    showToast('Posizione aggiunta');
-  }, [showToast]);
-
-  const updatePolyPosition = useCallback((id, field, value) => {
-    setData(prev => {
-      const strFields = ['market', 'outcome', 'currency', 'status', 'deadline', 'note'];
-      return {
-        ...prev,
-        markets: {
-          ...prev.markets,
-          polyPositions: prev.markets.polyPositions.map(x =>
-            x.id === id ? { ...x, [field]: strFields.includes(field) ? value : (Number(value) || 0) } : x
-          )
-        }
-      };
-    });
-  }, []);
-
-  const removePolyPosition = useCallback((id) => {
-    setData(prev => ({
-      ...prev,
-      markets: { ...prev.markets, polyPositions: prev.markets.polyPositions.filter(x => x.id !== id) }
-    }));
-  }, []);
-
-  const closePolyPosition = useCallback((id, status) => {
-    setData(prev => {
-      const pos = prev.markets.polyPositions.find(x => x.id === id);
-      if (!pos) return prev;
-      const wasOpen = pos.status === 'Aperta' || pos.status === 'Chiusa';
-      const becameResolved = status === 'Vinta' || status === 'Persa';
-      const updated = prev.markets.polyPositions.map(x => x.id === id ? { ...x, status } : x);
-      let hist = prev.markets.pnlHistory;
-      if (becameResolved && wasOpen) {
-        const realized = status === 'Vinta'
-          ? pos.capitalRisked * ((100 - pos.entryProb) / Math.max(1, pos.entryProb))
-          : -pos.capitalRisked;
-        const month = new Date().toISOString().slice(0, 7);
-        const prevCum = hist.length ? hist[hist.length - 1].pnl : 0;
-        hist = [...hist, { date: month, pnl: prevCum + realized }];
-      }
-      return { ...prev, markets: { ...prev.markets, polyPositions: updated, pnlHistory: hist } };
-    });
-  }, []);
-
-  const updateEurUsd = useCallback((rate) => {
-    setData(prev => ({ ...prev, markets: { ...prev.markets, eurUsdRate: Number(rate) || 1 } }));
-  }, []);
-
   /* Sull'app installata su iPhone un download da blob apre un'anteprima senza
      via d'uscita: il foglio di condivisione invece offre "Salva su File".
      Altrove resta il download, con il link agganciato alla pagina (Firefox lo
@@ -3079,7 +2667,7 @@ function FinanceDashboard() {
 
   const addTransaction = useCallback((tx) => {
     const now = new Date().toISOString();
-    setData(prev => ({ ...prev, transactions: [...(prev.transactions || []), { ...tx, id: Date.now(), createdAt: now, updatedAt: now }] }));
+    setData(prev => ({ ...prev, transactions: [...(prev.transactions || []), { ...tx, id: tx.id || Date.now(), createdAt: now, updatedAt: now }] }));
     showToast('Movimento aggiunto');
   }, [showToast]);
   const updateTransaction = useCallback((id, tx) => {
@@ -3122,7 +2710,6 @@ function FinanceDashboard() {
     { id: 'income', label: 'Entrate & Spese', icon: Ic.wallet },
     { id: 'transactions', label: 'Movimenti', icon: Ic.exchange },
     { id: 'investments', label: 'Investimenti', icon: Ic.trend },
-    { id: 'markets', label: 'Mercati', icon: Ic.candle },
     { id: 'projection', label: 'Proiezioni', icon: Ic.chart },
     { id: 'mortgage', label: 'Mutui', icon: Ic.home },
     { id: 'history', label: 'Storico', icon: Ic.clock },
@@ -3388,7 +2975,7 @@ function FinanceDashboard() {
                     <XAxis type="number" {...scale.axis} tickFormatter={fmtTick} minTickGap={scale.minTickGap} />
                     <YAxis type="category" dataKey="name" {...scale.axis} width={narrow ? 64 : 80} />
                     <Tooltip {...TT_BAR} formatter={(v) => fmt(v)} />
-                    <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                    <Bar {...CHART_ANIM} dataKey="value" radius={[0, 6, 6, 0]}>
                       {barData.map((_, i) => <Cell key={i} fill={`url(#barGrad${i})`} />)}
                     </Bar>
                   </BarChart>
@@ -3419,7 +3006,7 @@ function FinanceDashboard() {
                     <XAxis dataKey="month" {...scale.axis} ticks={[0, 12, 24, 36, 48, 60]} interval={0} tickFormatter={v => `${v / 12}a`} />
                     <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick} />
                     <Tooltip {...TT_LINE} formatter={(v) => fmt(v)} labelFormatter={(l) => `Mese ${l}`} />
-                    <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={2.5} dot={false} name="Patrimonio" />
+                    <Line {...CHART_ANIM} type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={2.5} dot={false} name="Patrimonio" />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -3480,11 +3067,11 @@ function FinanceDashboard() {
                 <h3 className="card-title"><span><span className="diamond">◆</span><span style={{ fontStyle: 'italic' }}>Liquidita & Cuscinetto</span></span></h3>
                 <div style={{ marginBottom: 18 }}>
                   <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase' }}>Liquidita attuale</label>
-                  <input type="number" value={data.liquidity.current} onChange={e => updateLiquidity('current', e.target.value)} className="input-cell" style={{ fontSize: 22, marginTop: 6 }} />
+                  <input aria-label="Liquidita attuale" type="number" value={data.liquidity.current} onChange={e => updateLiquidity('current', e.target.value)} className="input-cell" style={{ fontSize: 22, marginTop: 6 }} />
                 </div>
                 <div style={{ marginBottom: 18 }}>
                   <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.15em', textTransform: 'uppercase' }}>Target fondo emergenza</label>
-                  <input type="number" value={data.liquidity.targetEmergency} onChange={e => updateLiquidity('targetEmergency', e.target.value)} className="input-cell" style={{ fontSize: 22, marginTop: 6 }} />
+                  <input aria-label="Target fondo emergenza" type="number" value={data.liquidity.targetEmergency} onChange={e => updateLiquidity('targetEmergency', e.target.value)} className="input-cell" style={{ fontSize: 22, marginTop: 6 }} />
                 </div>
                 <div className="progress-track">
                   <div className="progress-fill" style={{ '--fill': (Math.min(100, (data.liquidity.current / Math.max(1, data.liquidity.targetEmergency)) * 100)) / 100, background: data.liquidity.current >= data.liquidity.targetEmergency ? C.sage : C.gold }} />
@@ -3533,18 +3120,6 @@ function FinanceDashboard() {
               onAddItem={addItem}
               onRemoveItem={removeItem}
               onUpdateTarget={updateInvestmentTarget}
-            />
-          )}
-
-          {/* ══════ MARKETS ══════ */}
-          {activeTab === 'markets' && (
-            <MarketsTab
-              markets={data.markets}
-              onAdd={addPolyPosition}
-              onUpdate={updatePolyPosition}
-              onRemove={removePolyPosition}
-              onClose={closePolyPosition}
-              onUpdateRate={updateEurUsd}
             />
           )}
 
@@ -3597,9 +3172,9 @@ function FinanceDashboard() {
                       <XAxis dataKey="month" {...scale.axis} ticks={[0, 12, 24, 36, 48, 60]} interval={0} tickFormatter={v => `${v / 12}a`} />
                       <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick} />
                       <Tooltip {...TT_LINE} formatter={(v) => fmt(v)} labelFormatter={(l) => `Mese ${l}`} />
-                      <Line type="monotone" dataKey="liquidity" stroke={C.textDim} strokeWidth={2} name="Liquidita" dot={false} />
-                      <Line type="monotone" dataKey="investments" stroke={C.rust} strokeWidth={2} name="Investimenti" dot={false} />
-                      <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={3} name="Patrimonio totale" dot={false} />
+                      <Line {...CHART_ANIM} type="monotone" dataKey="liquidity" stroke={C.textDim} strokeWidth={2} name="Liquidita" dot={false} />
+                      <Line {...CHART_ANIM} type="monotone" dataKey="investments" stroke={C.rust} strokeWidth={2} name="Investimenti" dot={false} />
+                      <Line {...CHART_ANIM} type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={3} name="Patrimonio totale" dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -3650,7 +3225,7 @@ function FinanceDashboard() {
               <div>
                 <label style={{ fontSize: 10, color: C.textMuted, letterSpacing: '0.12em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>{label}</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <input type="number" step={step} className="input-cell mono-font" value={m[field] ?? 0} onChange={e => updateMortgage(field, e.target.value)} style={{ width: '100%', textAlign: 'right' }} />
+                  <input aria-label={label} type="number" step={step} className="input-cell mono-font" value={m[field] ?? 0} onChange={e => updateMortgage(field, e.target.value)} style={{ width: '100%', textAlign: 'right' }} />
                   {suffix && <span className="mono-font" style={{ fontSize: 12, color: C.textMuted }}>{suffix}</span>}
                 </div>
               </div>
@@ -3728,8 +3303,8 @@ function FinanceDashboard() {
                       <XAxis dataKey="year" {...scale.axis} minTickGap={scale.minTickGap} tickFormatter={v => `${v}a`} />
                       <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick} />
                       <Tooltip {...TT_LINE} formatter={v => fmt(v)} labelFormatter={l => `Anno ${l}`} />
-                      <Line type="monotone" dataKey="residuo" stroke={C.gold} strokeWidth={3} name="Capitale residuo" dot={false} />
-                      <Line type="monotone" dataKey="interessi" stroke={C.rust} strokeWidth={2} name="Interessi cumulati" dot={false} />
+                      <Line {...CHART_ANIM} type="monotone" dataKey="residuo" stroke={C.gold} strokeWidth={3} name="Capitale residuo" dot={false} />
+                      <Line {...CHART_ANIM} type="monotone" dataKey="interessi" stroke={C.rust} strokeWidth={2} name="Interessi cumulati" dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -3876,10 +3451,10 @@ function FinanceDashboard() {
                           <CartesianGrid strokeDasharray="2 4" stroke={C.border} />
                           <XAxis dataKey="date" {...scale.axis} minTickGap={scale.minTickGap} />
                           <YAxis {...scale.axis} width={scale.yWidth} tickFormatter={fmtTick} />
-                          <Tooltip {...TT_LINE} formatter={(v) => fmt(v)} />
-                          <Line type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={2} name="Patrimonio" dot={{ r: 4 }} />
-                          <Line type="monotone" dataKey="liquidity" stroke={C.textDim} strokeWidth={1.5} name="Liquidita" dot={{ r: 3 }} />
-                          <Line type="monotone" dataKey="investments" stroke={C.sage} strokeWidth={1.5} name="Investimenti" dot={{ r: 3 }} />
+                          <Tooltip {...TT_LINE} formatter={(v) => fmt(v)} labelFormatter={itMonthLabel} />
+                          <Line {...CHART_ANIM} type="monotone" dataKey="netWorth" stroke={C.gold} strokeWidth={2} name="Patrimonio" dot={{ r: 4 }} />
+                          <Line {...CHART_ANIM} type="monotone" dataKey="liquidity" stroke={C.textDim} strokeWidth={1.5} name="Liquidita" dot={{ r: 3 }} />
+                          <Line {...CHART_ANIM} type="monotone" dataKey="investments" stroke={C.sage} strokeWidth={1.5} name="Investimenti" dot={{ r: 3 }} />
                         </LineChart>
                       </ResponsiveContainer>
                       <div className="desktop-table" style={{ overflowX: 'auto', marginTop: 20 }}>
@@ -3894,7 +3469,7 @@ function FinanceDashboard() {
                           <tbody>
                             {hist.map((h) => (
                               <tr key={h.date} style={{ borderBottom: `1px solid ${C.border}` }}>
-                                <td className="mono-font" style={{ padding: '10px 8px' }}>{h.date}</td>
+                                <td style={{ padding: '10px 8px' }}>{itMonthLabel(h.date)}</td>
                                 <td className="mono-font" style={{ padding: '10px 8px', color: C.gold }}>{fmt(h.netWorth)}</td>
                                 <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.liquidity)}</td>
                                 <td className="mono-font" style={{ padding: '10px 8px' }}>{fmt(h.investments)}</td>

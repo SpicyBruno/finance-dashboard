@@ -18,9 +18,7 @@ const {
   Pie,
   Cell,
   BarChart,
-  Bar,
-  RadialBarChart,
-  RadialBar
+  Bar
 } = Recharts;
 
 /* ── Icons ── */
@@ -357,38 +355,6 @@ const Ic = {
   }), /*#__PURE__*/React.createElement("polyline", {
     points: "10 9 9 9 8 9"
   })),
-  candle: ({
-    size = 20
-  }) => /*#__PURE__*/React.createElement("svg", {
-    width: size,
-    height: size,
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: "1.7",
-    strokeLinecap: "round",
-    strokeLinejoin: "round"
-  }, /*#__PURE__*/React.createElement("line", {
-    x1: "7",
-    y1: "3",
-    x2: "7",
-    y2: "21"
-  }), /*#__PURE__*/React.createElement("rect", {
-    x: "4",
-    y: "7",
-    width: "6",
-    height: "9"
-  }), /*#__PURE__*/React.createElement("line", {
-    x1: "17",
-    y1: "3",
-    x2: "17",
-    y2: "21"
-  }), /*#__PURE__*/React.createElement("rect", {
-    x: "14",
-    y: "10",
-    width: "6",
-    height: "7"
-  })),
   exchange: ({
     size = 20
   }) => /*#__PURE__*/React.createElement("svg", {
@@ -676,6 +642,9 @@ const DEFAULT_DATA = {
       Liquidita: 10
     }
   },
+  /* La sezione Mercati (Polymarket) è stata tolta a ottobre 2026. I dati
+     restano nel modello perché le posizioni salvate sopravvivano nel
+     localStorage e nei backup JSON, nel caso la sezione torni. */
   markets: {
     polyPositions: [],
     pnlHistory: [],
@@ -1110,14 +1079,18 @@ const C = {
 const OUTFLOW = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)'];
 const RETAINED = 'var(--chart-retained)';
 const rampColor = (i, n) => OUTFLOW[Math.min(OUTFLOW.length - 1, Math.round(i / Math.max(1, n - 1) * (OUTFLOW.length - 1)))];
+const prefersReducedMotion = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/* Il numero sale una volta sola, all'ingresso. Con moto ridotto arriva già al
-   valore finale: nessuno stato intermedio da guardare. */
-function useCountUp(target, duration = 700) {
-  const [shown, setShown] = useState(target);
-  const fromRef = useRef(target);
+/* Il numero si assesta una volta sola, all'ingresso (`enter`): parte dall'86%
+   e frena sul valore, così le cifre restano leggibili mentre arrivano. Prima
+   partiva già dal valore finale e l'ingresso promesso non avveniva mai. Dopo,
+   anima solo i cambi di valore. Con moto ridotto arriva già al valore finale. */
+function useCountUp(target, enter = false, duration = 700) {
+  const [start] = useState(() => enter && !prefersReducedMotion() && isFinite(target) && target !== 0 ? target * 0.86 : target);
+  const [shown, setShown] = useState(start);
+  const fromRef = useRef(start);
   useEffect(() => {
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduce = prefersReducedMotion();
     const from = fromRef.current;
     fromRef.current = target;
     if (reduce || from === target || !isFinite(target)) {
@@ -1136,6 +1109,26 @@ function useCountUp(target, duration = 700) {
     return () => cancelAnimationFrame(raf);
   }, [target, duration]);
   return shown;
+}
+
+/* Riscontro del salvataggio: la riga appena salvata si illumina un attimo e,
+   se è fuori schermo, ci si scorre sopra. Prima il modulo si chiudeva e la
+   voce finiva da qualche parte nell'elenco ordinato per data, senza segno.
+   Le righe portano `data-saved-id`; fra tabella e lista si sceglie quella
+   visibile. */
+function useSavedFlash(duration = 1600) {
+  const [flashId, setFlashId] = useState(null);
+  useEffect(() => {
+    if (flashId === null) return;
+    const el = [...document.querySelectorAll(`[data-saved-id="${flashId}"]`)].find(n => n.offsetParent !== null);
+    if (el) el.scrollIntoView({
+      block: 'nearest',
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth'
+    });
+    const t = setTimeout(() => setFlashId(null), duration);
+    return () => clearTimeout(t);
+  }, [flashId, duration]);
+  return [flashId, setFlashId];
 }
 
 /* Recharts vuole un'altezza numerica, non un clamp CSS: senza questo i
@@ -1189,6 +1182,15 @@ const fmtTick = v => {
     maximumFractionDigits: a >= 10000 ? 0 : 1
   })}k`;
   return `${Math.round(n)}€`;
+};
+
+/* Un solo passo per tutti i grafici. Il default di Recharts (1,5 s, ease) si
+   ripeteva a ogni tasto premuto nei parametri del mutuo e ignorava la
+   preferenza di moto ridotto. */
+const CHART_ANIM = {
+  isAnimationActive: !prefersReducedMotion(),
+  animationDuration: 650,
+  animationEasing: 'ease-out'
 };
 
 /* Un solo stile per i tooltip: prima era ricopiato identico in quattro
@@ -1259,7 +1261,7 @@ function Donut({
   }, /*#__PURE__*/React.createElement(ResponsiveContainer, {
     width: "100%",
     height: "100%"
-  }, /*#__PURE__*/React.createElement(PieChart, null, /*#__PURE__*/React.createElement(Pie, {
+  }, /*#__PURE__*/React.createElement(PieChart, null, /*#__PURE__*/React.createElement(Pie, _extends({}, CHART_ANIM, {
     data: data,
     dataKey: "value",
     nameKey: "name",
@@ -1270,7 +1272,7 @@ function Donut({
     paddingAngle: 2,
     stroke: "var(--card-solid)",
     strokeWidth: 2
-  }, data.map((d, i) => /*#__PURE__*/React.createElement(Cell, {
+  }), data.map((d, i) => /*#__PURE__*/React.createElement(Cell, {
     key: d.name + i,
     fill: colors[i % colors.length]
   }))))), center && /*#__PURE__*/React.createElement("div", {
@@ -1311,6 +1313,11 @@ function DonutLegend({
    scala grande e accanto il dato che lo spiega. Prima le altre sezioni
    aprivano con quattro riquadri identici in fila, e niente contava più di
    niente. */
+/* Il momento d'autore: la prima volta che si apre una sezione, il suo hero si
+   assesta (numero, barre, arco, sparkline) come inchiostro d'oro che si
+   posa. Le visite successive lo trovano già fermo: rivederlo a ogni cambio di
+   scheda sarebbe solo attesa. */
+const settledHeroes = new Set();
 function PageHero({
   label,
   value,
@@ -1322,9 +1329,13 @@ function PageHero({
   footClass = ''
 }) {
   const numeric = typeof value === 'number' && isFinite(value);
-  const shown = useCountUp(numeric ? value : 0);
+  const [settle] = useState(() => !settledHeroes.has(label));
+  useEffect(() => {
+    settledHeroes.add(label);
+  }, [label]);
+  const shown = useCountUp(numeric ? value : 0, settle);
   return /*#__PURE__*/React.createElement("section", {
-    className: "card-hero reveal"
+    className: `card-hero reveal ${settle ? 'settle' : ''}`
   }, /*#__PURE__*/React.createElement("div", {
     className: aside ? 'hero-grid' : undefined
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
@@ -1403,7 +1414,7 @@ function PartBars({
 }) {
   return /*#__PURE__*/React.createElement("div", null, title && /*#__PURE__*/React.createElement("div", {
     className: "aside-label"
-  }, title), parts.map(p => {
+  }, title), parts.map((p, i) => {
     const fill = p.fill !== undefined ? p.fill : p.value / Math.max(1, total);
     const share = p.share !== undefined ? p.share : fmtPct(p.value / Math.max(1, total));
     return /*#__PURE__*/React.createElement("div", {
@@ -1426,6 +1437,7 @@ function PartBars({
       className: "progress-fill",
       style: {
         '--fill': Math.max(0, Math.min(1, fill)),
+        '--i': i,
         background: p.color
       }
     }), p.target !== undefined && /*#__PURE__*/React.createElement("span", {
@@ -1525,6 +1537,7 @@ function ArcMeter({
     stroke: "var(--border)",
     strokeWidth: "5"
   }), pct > 0 && /*#__PURE__*/React.createElement("circle", {
+    className: "arc-fill",
     cx: cx,
     cy: cy,
     r: r,
@@ -1532,7 +1545,11 @@ function ArcMeter({
     stroke: color,
     strokeWidth: "5",
     strokeLinecap: "round",
-    strokeDasharray: `${(circ * pct).toFixed(1)} ${circ.toFixed(1)}`,
+    strokeDasharray: circ.toFixed(1),
+    strokeDashoffset: (circ * (1 - pct)).toFixed(1),
+    style: {
+      '--arc-circ': circ.toFixed(1)
+    },
     transform: `rotate(-90 ${cx} ${cy})`
   }));
 }
@@ -1644,102 +1661,37 @@ function Toast({
   }, message);
 }
 
-/* ── RadialGauge ── */
-function RadialGauge({
-  value,
-  max = 1,
-  label,
-  sub,
-  color = C.gold,
-  size = 160
-}) {
-  const pct = Math.max(0, Math.min(1, max > 0 ? value / max : 0));
-  const data = [{
-    name: 'v',
-    value: pct * 100,
-    fill: color
-  }];
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      width: '100%',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: size
-    }
-  }, /*#__PURE__*/React.createElement(ResponsiveContainer, {
-    width: "100%",
-    height: size
-  }, /*#__PURE__*/React.createElement(RadialBarChart, {
-    cx: "50%",
-    cy: "50%",
-    innerRadius: "72%",
-    outerRadius: "100%",
-    barSize: 12,
-    data: data,
-    startAngle: 220,
-    endAngle: -40
-  }, /*#__PURE__*/React.createElement("defs", null, /*#__PURE__*/React.createElement("linearGradient", {
-    id: "gaugeGrad",
-    x1: "0",
-    y1: "0",
-    x2: "1",
-    y2: "1"
-  }, /*#__PURE__*/React.createElement("stop", {
-    offset: "0%",
-    stopColor: color,
-    stopOpacity: "1"
-  }), /*#__PURE__*/React.createElement("stop", {
-    offset: "100%",
-    stopColor: color,
-    stopOpacity: "0.55"
-  }))), /*#__PURE__*/React.createElement(RadialBar, {
-    dataKey: "value",
-    cornerRadius: 8,
-    fill: "url(#gaugeGrad)",
-    background: false
-  }), /*#__PURE__*/React.createElement(Tooltip, {
-    contentStyle: {
-      display: 'none'
-    }
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      inset: 0,
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      pointerEvents: 'none',
-      textAlign: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "display-font number-display",
-    style: {
-      fontSize: 32,
-      color: color,
-      lineHeight: 1
-    }
-  }, label), sub && /*#__PURE__*/React.createElement("div", {
-    className: "mono-font",
-    style: {
-      fontSize: 11,
-      color: C.textDim,
-      marginTop: 6,
-      letterSpacing: '0.08em'
-    }
-  }, sub)));
-}
 /* ── Sidebar (solo desktop) ── */
 function Sidebar({
   tabs,
   activeTab,
   onChange
 }) {
+  /* La piastra attiva scorre fino al bottone scelto. Si misura la posizione
+     reale del bottone invece di dedurla da altezze fisse. */
+  const asideRef = useRef(null);
+  const [plateY, setPlateY] = useState(null);
+  React.useLayoutEffect(() => {
+    // Sotto i 780px la barra è nascosta (offsetParent nullo): niente piastra,
+    // e si rimisura quando la finestra torna larga
+    const measure = () => {
+      const btn = asideRef.current && asideRef.current.querySelector('.side-btn.active');
+      setPlateY(btn && btn.offsetParent ? btn.offsetTop : null);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [activeTab]);
   return /*#__PURE__*/React.createElement("aside", {
-    className: "sidebar"
-  }, /*#__PURE__*/React.createElement("div", {
+    className: `sidebar ${plateY !== null ? 'has-plate' : ''}`,
+    ref: asideRef
+  }, plateY !== null && /*#__PURE__*/React.createElement("span", {
+    className: "side-plate",
+    style: {
+      transform: `translateY(${plateY}px)`
+    },
+    "aria-hidden": "true"
+  }), /*#__PURE__*/React.createElement("div", {
     className: "sidebar-logo",
     title: "G"
   }, "G"), tabs.map(t => {
@@ -1777,10 +1729,17 @@ function MobileNav({
     investments: 'Investim.',
     projection: 'Proiezioni'
   };
+  const activeIndex = inSheet ? primary.length : Math.max(0, primary.findIndex(t => t.id === activeTab));
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("nav", {
     className: "mobile-nav",
     "aria-label": "Sezioni"
-  }, primary.map(t => {
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "nav-indicator",
+    style: {
+      '--i': activeIndex
+    },
+    "aria-hidden": "true"
+  }), primary.map(t => {
     const Icon = t.icon;
     return /*#__PURE__*/React.createElement("button", {
       key: t.id,
@@ -2419,6 +2378,7 @@ function CedoliniTab({
     note: ''
   });
   const [err, setErr] = useState('');
+  const [flashId, flash] = useSavedFlash();
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(null); // null | { msg, pct }
   const [importErr, setImportErr] = useState('');
@@ -2497,12 +2457,14 @@ function CedoliniTab({
       setConfirmErr(`C'è già un cedolino per ${itMonthLabel(confirmData.month)}: eliminalo dall'elenco prima di importarne un altro.`);
       return;
     }
+    const id = Date.now();
     onAdd({
-      id: Date.now(),
+      id,
       month: confirmData.month,
       netto: Math.round(n * 100) / 100,
       note: confirmData.note
     });
+    flash(id);
     setConfirmData(null);
     setConfirmErr('');
     showToast && showToast('Cedolino importato dal documento');
@@ -2522,12 +2484,14 @@ function CedoliniTab({
       setErr('Cedolino già presente per questo mese');
       return;
     }
+    const id = Date.now();
     onAdd({
-      id: Date.now(),
+      id,
       month: form.month,
       netto: nettoNum,
       note: form.note
     });
+    flash(id);
     setForm(f => ({
       ...f,
       netto: '',
@@ -2550,7 +2514,7 @@ function CedoliniTab({
     return i > 0 ? c.netto - sorted[i - 1].netto : null;
   };
   const deltaText = d => d === null ? '—' : `${d >= 0 ? '+' : '−'}${fmt(Math.abs(d))}`;
-  const deltaColor = d => d === null ? C.textMuted : d >= 0 ? C.sage : C.rust;
+  const deltaColor = d => d === null ? C.textDim : d >= 0 ? C.sage : C.rust;
   return /*#__PURE__*/React.createElement("div", {
     className: "bento"
   }, sorted.length > 0 && /*#__PURE__*/React.createElement(PageHero, {
@@ -2881,7 +2845,7 @@ function CedoliniTab({
     domain: [min => Math.max(0, Math.floor(min * 0.92 / 100) * 100), max => Math.ceil(max * 1.04 / 100) * 100]
   })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
     formatter: v => [fmt(v), 'Netto']
-  })), /*#__PURE__*/React.createElement(Line, {
+  })), /*#__PURE__*/React.createElement(Line, _extends({}, CHART_ANIM, {
     type: "monotone",
     dataKey: "netto",
     stroke: C.gold,
@@ -2891,7 +2855,7 @@ function CedoliniTab({
       fill: C.gold
     },
     name: "Netto"
-  })))), /*#__PURE__*/React.createElement("div", {
+  }))))), /*#__PURE__*/React.createElement("div", {
     className: "bento-card span-12"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
@@ -2947,17 +2911,18 @@ function CedoliniTab({
     const isActive = c.month === currentISO;
     return /*#__PURE__*/React.createElement("tr", {
       key: c.id,
+      "data-saved-id": c.id,
+      className: c.id === flashId ? 'just-saved' : undefined,
       style: {
         borderBottom: `1px solid ${C.border}`,
         background: isActive ? 'var(--accent-subtle)' : 'transparent'
       }
     }, /*#__PURE__*/React.createElement("td", {
-      className: "mono-font",
       style: {
         padding: '12px 8px',
         color: isActive ? C.gold : C.text
       }
-    }, c.month), /*#__PURE__*/React.createElement("td", {
+    }, itMonthLabel(c.month)), /*#__PURE__*/React.createElement("td", {
       className: "mono-font",
       style: {
         padding: '12px 8px',
@@ -2999,7 +2964,8 @@ function CedoliniTab({
     const isActive = c.month === currentISO;
     return /*#__PURE__*/React.createElement("div", {
       key: c.id,
-      className: `m-row ${isActive ? 'is-active' : ''}`
+      "data-saved-id": c.id,
+      className: `m-row ${isActive ? 'is-active' : ''} ${c.id === flashId ? 'just-saved' : ''}`
     }, /*#__PURE__*/React.createElement("div", {
       style: {
         minWidth: 0
@@ -3147,7 +3113,13 @@ function InvestmentsTab({
     className: "card-title"
   }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
     className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Performance per posizione"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Performance per posizione")), /*#__PURE__*/React.createElement("span", {
+    className: "mono-font",
+    style: {
+      fontSize: 11,
+      color: C.textMuted
+    }
+  }, "tacca = capitale versato")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
@@ -3157,8 +3129,14 @@ function InvestmentsTab({
     const cv = Number(inv.current || 0);
     const ev = Number(inv.entryValue || 0);
     const roi = ev > 0 ? (cv - ev) / ev * 100 : 0;
-    const progressMax = Math.max(cv, ev, 1);
+    /* Barra = valore attuale sulla scala della posizione più grande,
+       tacca = capitale versato. Prima la barra era il rapporto attuale/
+       capitale tagliato a 100%: piena per qualunque guadagno, anche
+       +0,00%, e quindi muta. Ora il guadagno è la barra che supera la
+       tacca, la perdita quella che non ci arriva. */
+    const progressMax = Math.max(1, ...investments.map(i => Math.max(Number(i.current || 0), Number(i.entryValue || 0))));
     const progressPct = cv / progressMax * 100;
+    const capitalPct = ev / progressMax * 100;
     const roiColor = ev === 0 ? C.textMuted : roi >= 0 ? C.sage : C.rust;
     const typeColor = TYPE_COLORS[inv.type] || C.gold;
     return /*#__PURE__*/React.createElement("div", {
@@ -3230,6 +3208,11 @@ function InvestmentsTab({
         '--fill': progressPct / 100,
         background: roi >= 0 ? `linear-gradient(90deg, ${C.goldDim}, ${C.sage})` : `linear-gradient(90deg, ${C.rust}, ${C.goldDim})`
       }
+    }), ev > 0 && /*#__PURE__*/React.createElement("span", {
+      className: "target-tick",
+      style: {
+        left: `${capitalPct}%`
+      }
     })), /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
@@ -3282,15 +3265,15 @@ function InvestmentsTab({
     tickFormatter: v => `${v}%`
   })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_BAR, {
     formatter: v => `${v}%`
-  })), /*#__PURE__*/React.createElement(Bar, {
+  })), /*#__PURE__*/React.createElement(Bar, _extends({}, CHART_ANIM, {
     dataKey: "Attuale",
     fill: C.gold,
     radius: [4, 4, 0, 0]
-  }), /*#__PURE__*/React.createElement(Bar, {
+  })), /*#__PURE__*/React.createElement(Bar, _extends({}, CHART_ANIM, {
     dataKey: "Target",
     fill: C.sage,
     radius: [4, 4, 0, 0]
-  }))), /*#__PURE__*/React.createElement("div", {
+  })))), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 14,
       display: 'grid',
@@ -3690,862 +3673,6 @@ function InvestmentsTab({
   }, "Il PIP Alleata Previdenza ha un TER del 2,93% \u2014 sopra la media per ETF (0,15-0,25%). Proiezioni usano rendimento netto 4% annuo per \"Pensione\". Valuta riduzione versamento dopo settembre 2026 mantenendo quota per deducibilita fiscale.")))));
 }
 
-/* ── Sentiment Panel ── */
-function SentimentPanel({
-  onPrefill
-}) {
-  const [fng, setFng] = React.useState({
-    data: null,
-    error: null,
-    loading: true
-  });
-  const [poly, setPoly] = React.useState({
-    data: null,
-    error: null,
-    loading: true
-  });
-  const scale = useChartScale();
-  React.useEffect(() => {
-    const ctrl = new AbortController();
-    fetch('https://api.alternative.me/fng/?limit=7', {
-      signal: ctrl.signal
-    }).then(r => r.ok ? r.json() : Promise.reject('http')).then(j => {
-      const arr = (j.data || []).slice().reverse().map(d => ({
-        date: new Date(Number(d.timestamp) * 1000).toISOString().slice(5, 10),
-        value: Number(d.value),
-        classification: d.value_classification
-      }));
-      setFng({
-        data: arr,
-        error: null,
-        loading: false
-      });
-    }).catch(e => {
-      if (e.name !== 'AbortError') setFng({
-        data: null,
-        error: true,
-        loading: false
-      });
-    });
-    return () => ctrl.abort();
-  }, []);
-  React.useEffect(() => {
-    const ctrl = new AbortController();
-    fetch('https://gamma-api.polymarket.com/markets?limit=10&active=true&closed=false', {
-      signal: ctrl.signal
-    }).then(r => r.ok ? r.json() : Promise.reject('http')).then(j => {
-      const list = (Array.isArray(j) ? j : j.data || []).slice(0, 10).map(m => {
-        let yes = null;
-        try {
-          const prices = typeof m.outcomePrices === 'string' ? JSON.parse(m.outcomePrices) : m.outcomePrices;
-          if (Array.isArray(prices) && prices.length > 0) yes = Number(prices[0]);
-        } catch {}
-        return {
-          id: m.id || m.conditionId,
-          question: m.question || m.slug,
-          yes,
-          volume: m.volume ? Number(m.volume) : null,
-          endDate: m.endDate || m.end_date_iso || ''
-        };
-      });
-      setPoly({
-        data: list,
-        error: null,
-        loading: false
-      });
-    }).catch(e => {
-      if (e.name !== 'AbortError') setPoly({
-        data: null,
-        error: true,
-        loading: false
-      });
-    });
-    return () => ctrl.abort();
-  }, []);
-  const fngCurrent = fng.data && fng.data.length > 0 ? fng.data[fng.data.length - 1] : null;
-  const fngColor = v => v <= 25 ? C.danger : v <= 45 ? C.rust : v <= 55 ? C.gold : v <= 75 ? '#a0c774' : C.sage;
-  const fngLabel = v => v <= 25 ? 'Extreme Fear' : v <= 45 ? 'Fear' : v <= 55 ? 'Neutral' : v <= 75 ? 'Greed' : 'Extreme Greed';
-  return /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-12"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Sentiment & feed live"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))',
-      gap: 20
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow",
-    style: {
-      marginBottom: 12
-    }
-  }, "Crypto Fear & Greed (alternative.me)"), fng.loading && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.textMuted,
-      fontSize: 12
-    }
-  }, "Caricamento\u2026"), fng.error && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.rust,
-      fontSize: 12
-    }
-  }, "Dati non disponibili offline."), fngCurrent && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 20,
-      marginBottom: 14
-    }
-  }, /*#__PURE__*/React.createElement(RadialGauge, {
-    value: fngCurrent.value,
-    max: 100,
-    label: fngCurrent.value,
-    sub: fngLabel(fngCurrent.value).toUpperCase(),
-    color: fngColor(fngCurrent.value),
-    size: 140
-  })), /*#__PURE__*/React.createElement(ResponsiveContainer, {
-    width: "100%",
-    height: 120
-  }, /*#__PURE__*/React.createElement(LineChart, {
-    data: fng.data,
-    margin: scale.margin
-  }, /*#__PURE__*/React.createElement(CartesianGrid, {
-    strokeDasharray: "2 4",
-    stroke: C.border
-  }), /*#__PURE__*/React.createElement(XAxis, _extends({
-    dataKey: "date"
-  }, scale.axis, {
-    minTickGap: scale.minTickGap
-  })), /*#__PURE__*/React.createElement(YAxis, _extends({}, scale.axis, {
-    width: 30,
-    domain: [0, 100]
-  })), /*#__PURE__*/React.createElement(Tooltip, TT_LINE), /*#__PURE__*/React.createElement(Line, {
-    type: "monotone",
-    dataKey: "value",
-    stroke: C.gold,
-    strokeWidth: 2,
-    dot: {
-      r: 3,
-      fill: C.gold
-    }
-  }))))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-eyebrow",
-    style: {
-      marginBottom: 12
-    }
-  }, "Top 10 mercati Polymarket"), poly.loading && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.textMuted,
-      fontSize: 12
-    }
-  }, "Caricamento\u2026"), poly.error && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.rust,
-      fontSize: 12
-    }
-  }, "Feed non disponibile. Inserisci posizioni manualmente."), poly.data && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 8,
-      maxHeight: 380,
-      overflowY: 'auto'
-    }
-  }, poly.data.length === 0 && /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.textMuted,
-      fontSize: 12
-    }
-  }, "Nessun mercato attivo."), poly.data.map((m, i) => {
-    const yesPct = m.yes != null ? m.yes <= 1 ? m.yes * 100 : m.yes : null;
-    return /*#__PURE__*/React.createElement("div", {
-      key: m.id || i,
-      style: {
-        border: `1px solid ${C.border}`,
-        padding: 10,
-        borderRadius: 6,
-        display: 'flex',
-        gap: 10,
-        alignItems: 'center',
-        justifyContent: 'space-between'
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        flex: 1,
-        minWidth: 0
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 12,
-        color: C.text,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }
-    }, m.question), /*#__PURE__*/React.createElement("div", {
-      className: "mono-font",
-      style: {
-        fontSize: 10,
-        color: C.textMuted,
-        marginTop: 3
-      }
-    }, yesPct != null ? `YES ${yesPct.toFixed(1)}%` : 'YES n/d', m.volume != null ? ` · vol ${(m.volume / 1000).toFixed(1)}k` : '')), /*#__PURE__*/React.createElement("button", {
-      onClick: () => onPrefill({
-        market: m.question,
-        outcome: 'YES',
-        currency: 'USDC',
-        entryProb: yesPct != null ? Math.max(1, Math.min(99, Math.round(yesPct))) : 50,
-        currentProb: yesPct != null ? Math.max(1, Math.min(99, Math.round(yesPct))) : 50,
-        deadline: (m.endDate || '').slice(0, 10)
-      }),
-      style: {
-        background: 'transparent',
-        border: `1px solid ${C.goldDim}`,
-        color: C.gold,
-        padding: '4px 10px',
-        fontSize: 11,
-        letterSpacing: '0.06em',
-        cursor: 'pointer',
-        borderRadius: 6,
-        whiteSpace: 'nowrap'
-      }
-    }, "+ Watchlist"));
-  })))));
-}
-
-/* ── Markets Tab ── */
-const POSITION_STATUSES = ['Aperta', 'Chiusa', 'Vinta', 'Persa'];
-function MarketsTab({
-  markets,
-  onAdd,
-  onUpdate,
-  onRemove,
-  onClose,
-  onUpdateRate
-}) {
-  const [form, setForm] = React.useState({
-    market: '',
-    outcome: 'YES',
-    currency: 'USDC',
-    capitalRisked: '',
-    entryProb: '',
-    currentProb: '',
-    deadline: '',
-    note: ''
-  });
-  const [err, setErr] = React.useState('');
-  const formRef = React.useRef(null);
-  const scale = useChartScale();
-  const handlePrefill = React.useCallback(p => {
-    setForm(f => ({
-      ...f,
-      ...p,
-      capitalRisked: f.capitalRisked,
-      note: f.note
-    }));
-    setErr('');
-    if (formRef.current) formRef.current.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start'
-    });
-  }, []);
-  const handleAdd = () => {
-    const cap = Number(form.capitalRisked);
-    const ep = Number(form.entryProb);
-    const cp = Number(form.currentProb);
-    if (!form.market.trim()) {
-      setErr('Inserisci nome mercato');
-      return;
-    }
-    if (!(cap > 0)) {
-      setErr('Capitale deve essere > 0');
-      return;
-    }
-    if (!(ep >= 1 && ep <= 99)) {
-      setErr('Probabilità ingresso 1-99');
-      return;
-    }
-    if (!(cp >= 1 && cp <= 99)) {
-      setErr('Probabilità attuale 1-99');
-      return;
-    }
-    onAdd({
-      market: form.market.trim(),
-      outcome: form.outcome.trim() || 'YES',
-      currency: form.currency,
-      capitalRisked: cap,
-      entryProb: ep,
-      currentProb: cp,
-      status: 'Aperta',
-      deadline: form.deadline,
-      note: form.note
-    });
-    setForm({
-      market: '',
-      outcome: 'YES',
-      currency: 'USDC',
-      capitalRisked: '',
-      entryProb: '',
-      currentProb: '',
-      deadline: '',
-      note: ''
-    });
-    setErr('');
-  };
-  const positions = markets.polyPositions || [];
-  const open = positions.filter(p => p.status === 'Aperta');
-  const won = positions.filter(p => p.status === 'Vinta');
-  const lost = positions.filter(p => p.status === 'Persa');
-  const rate = Number(markets.eurUsdRate) || 1;
-  const openEur = open.filter(p => p.currency === 'EUR').reduce((s, p) => s + Number(p.capitalRisked || 0), 0);
-  const openUsd = open.filter(p => p.currency === 'USDC').reduce((s, p) => s + Number(p.capitalRisked || 0), 0);
-  const openUsdInEur = openUsd / rate;
-  const totalRiskEur = openEur + openUsdInEur;
-  const realizedPnl = positions.reduce((s, p) => {
-    if (p.status === 'Vinta') return s + p.capitalRisked * ((100 - p.entryProb) / Math.max(1, p.entryProb));
-    if (p.status === 'Persa') return s - p.capitalRisked;
-    return s;
-  }, 0);
-  const unrealizedPnl = open.reduce((s, p) => s + p.capitalRisked * ((p.currentProb - p.entryProb) / Math.max(1, p.entryProb)), 0);
-  const closedCount = won.length + lost.length;
-  const winRate = closedCount > 0 ? won.length / closedCount * 100 : 0;
-  const positionPnl = p => {
-    const delta = p.currentProb - p.entryProb;
-    if (p.status === 'Aperta') return p.capitalRisked * (delta / Math.max(1, p.entryProb));
-    if (p.status === 'Vinta') return p.capitalRisked * ((100 - p.entryProb) / Math.max(1, p.entryProb));
-    if (p.status === 'Persa') return -p.capitalRisked;
-    return 0;
-  };
-  const money = (p, v) => p.currency === 'USDC' ? fmtUSD(v) : fmtEUR2(v);
-  const signed = v => `${v >= 0 ? '+' : ''}${fmtEUR2(v)}`;
-  const labelStyle = {
-    fontSize: 10,
-    color: C.textMuted,
-    letterSpacing: '0.15em',
-    textTransform: 'uppercase',
-    display: 'block',
-    marginBottom: 6
-  };
-  return /*#__PURE__*/React.createElement("div", {
-    className: "bento"
-  }, /*#__PURE__*/React.createElement(PageHero, {
-    label: "P&L realizzato",
-    value: realizedPnl,
-    format: signed,
-    tone: realizedPnl >= 0 ? C.sage : C.rust,
-    meta: /*#__PURE__*/React.createElement("span", null, won.length, " vinte \xB7 ", lost.length, " perse \xB7 ", open.length, " aperte"),
-    aside: /*#__PURE__*/React.createElement("div", {
-      className: "arc-stat"
-    }, /*#__PURE__*/React.createElement(ArcMeter, {
-      pct: winRate / 100,
-      color: closedCount === 0 ? C.textMuted : winRate >= 50 ? C.sage : C.rust,
-      size: 84
-    }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-      className: "aside-label",
-      style: {
-        marginBottom: 6
-      }
-    }, "Win rate"), /*#__PURE__*/React.createElement("div", {
-      className: "stat-value",
-      style: {
-        color: closedCount === 0 ? C.textDim : winRate >= 50 ? C.sage : C.rust
-      }
-    }, winRate.toFixed(1), "%"), /*#__PURE__*/React.createElement("div", {
-      className: "stat-hint"
-    }, closedCount === 0 ? 'nessuna posizione chiusa' : `su ${closedCount} chiuse`)))
-  }), /*#__PURE__*/React.createElement(StatStrip, {
-    items: [{
-      label: 'Capitale a rischio (aperte)',
-      value: fmt(totalRiskEur),
-      color: C.gold,
-      hint: `EUR ${fmtEUR2(openEur)} · USDC ${fmtUSD(openUsd)}`
-    }, {
-      label: 'P&L non realizzato',
-      value: signed(unrealizedPnl),
-      color: unrealizedPnl >= 0 ? C.sage : C.rust,
-      hint: 'mark-to-market aperte'
-    }]
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-12"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Posizioni")), /*#__PURE__*/React.createElement("span", {
-    className: "mono-font",
-    style: {
-      fontSize: 11,
-      color: C.textMuted
-    }
-  }, positions.length, " totali")), positions.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '32px 12px',
-      textAlign: 'center',
-      color: C.textMuted
-    }
-  }, /*#__PURE__*/React.createElement("p", null, "Nessuna posizione. Aggiungine una dal modulo qui sotto o dalla watchlist Polymarket.")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
-    className: "desktop-table",
-    style: {
-      overflowX: 'auto'
-    }
-  }, /*#__PURE__*/React.createElement("table", {
-    style: {
-      width: '100%',
-      borderCollapse: 'collapse',
-      fontSize: 12,
-      minWidth: 900
-    }
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", {
-    style: {
-      borderBottom: `1px solid ${C.border}`
-    }
-  }, ['Mercato', 'Outcome', 'Val.', 'Capitale', 'Prob. ingr', 'Prob. att', 'Δ', 'Quota', 'P&L stim', 'Scad.', 'Stato', ''].map(h => /*#__PURE__*/React.createElement("th", {
-    key: h,
-    style: {
-      textAlign: 'left',
-      padding: '8px 6px',
-      fontSize: 9,
-      textTransform: 'uppercase',
-      letterSpacing: '0.12em',
-      color: C.textMuted,
-      fontWeight: 500
-    }
-  }, h)))), /*#__PURE__*/React.createElement("tbody", null, positions.map(p => {
-    const delta = p.currentProb - p.entryProb;
-    const quota = (100 / Math.max(1, p.entryProb)).toFixed(2);
-    const isOpen = p.status === 'Aperta';
-    const pnl = positionPnl(p);
-    const rowBg = p.status === 'Vinta' ? 'rgba(107,142,111,0.10)' : p.status === 'Persa' ? 'rgba(197,69,69,0.10)' : isOpen && p.currentProb > p.entryProb ? 'var(--accent-soft)' : 'transparent';
-    return /*#__PURE__*/React.createElement("tr", {
-      key: p.id,
-      className: "data-row",
-      style: {
-        borderBottom: `1px solid ${C.border}`,
-        background: rowBg
-      }
-    }, /*#__PURE__*/React.createElement("td", {
-      style: {
-        padding: '8px 6px',
-        maxWidth: 220,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-        color: C.text
-      }
-    }, p.market), /*#__PURE__*/React.createElement("td", {
-      className: "mono-font",
-      style: {
-        padding: '8px 6px',
-        color: C.textDim
-      }
-    }, p.outcome), /*#__PURE__*/React.createElement("td", {
-      className: "mono-font",
-      style: {
-        padding: '8px 6px',
-        color: C.textDim
-      }
-    }, p.currency), /*#__PURE__*/React.createElement("td", {
-      className: "mono-font",
-      style: {
-        padding: '8px 6px',
-        color: C.gold
-      }
-    }, money(p, p.capitalRisked)), /*#__PURE__*/React.createElement("td", {
-      className: "mono-font",
-      style: {
-        padding: '8px 6px'
-      }
-    }, p.entryProb, "%"), /*#__PURE__*/React.createElement("td", {
-      style: {
-        padding: '4px 6px',
-        width: 70
-      }
-    }, /*#__PURE__*/React.createElement("input", {
-      type: "number",
-      className: "input-cell mono-font",
-      value: p.currentProb,
-      onChange: e => onUpdate(p.id, 'currentProb', e.target.value),
-      style: {
-        fontSize: 12,
-        padding: '4px 2px',
-        textAlign: 'right'
-      },
-      "aria-label": "Probabilit\xE0 attuale"
-    })), /*#__PURE__*/React.createElement("td", {
-      className: "mono-font",
-      style: {
-        padding: '8px 6px',
-        color: delta >= 0 ? C.sage : C.rust
-      }
-    }, delta >= 0 ? '+' : '', delta.toFixed(0)), /*#__PURE__*/React.createElement("td", {
-      className: "mono-font",
-      style: {
-        padding: '8px 6px',
-        color: C.textDim
-      }
-    }, quota, "x"), /*#__PURE__*/React.createElement("td", {
-      className: "mono-font",
-      style: {
-        padding: '8px 6px',
-        color: pnl >= 0 ? C.sage : C.rust
-      }
-    }, pnl >= 0 ? '+' : '', money(p, pnl)), /*#__PURE__*/React.createElement("td", {
-      className: "mono-font",
-      style: {
-        padding: '8px 6px',
-        color: C.textMuted,
-        fontSize: 11
-      }
-    }, p.deadline || '—'), /*#__PURE__*/React.createElement("td", {
-      style: {
-        padding: '4px 6px'
-      }
-    }, /*#__PURE__*/React.createElement("select", {
-      value: p.status,
-      onChange: e => onClose(p.id, e.target.value),
-      className: "input-cell",
-      style: {
-        background: C.card,
-        fontSize: 11,
-        padding: '4px 2px'
-      },
-      "aria-label": "Stato"
-    }, POSITION_STATUSES.map(s => /*#__PURE__*/React.createElement("option", {
-      key: s
-    }, s)))), /*#__PURE__*/React.createElement("td", {
-      style: {
-        padding: '8px 6px'
-      }
-    }, /*#__PURE__*/React.createElement("button", {
-      className: "tx-action-btn danger",
-      onClick: () => onRemove(p.id),
-      "aria-label": `Elimina ${p.market}`
-    }, /*#__PURE__*/React.createElement(Ic.trash, null))));
-  })))), /*#__PURE__*/React.createElement("div", {
-    className: "phone-list"
-  }, positions.map(p => {
-    const pnl = positionPnl(p);
-    const quota = (100 / Math.max(1, p.entryProb)).toFixed(2);
-    return /*#__PURE__*/React.createElement("div", {
-      key: p.id,
-      className: "m-card"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "m-row-top"
-    }, /*#__PURE__*/React.createElement("div", {
-      className: "m-row-title"
-    }, p.market), /*#__PURE__*/React.createElement("span", {
-      className: "m-row-value",
-      style: {
-        color: pnl >= 0 ? C.sage : C.rust
-      }
-    }, pnl >= 0 ? '+' : '', money(p, pnl))), /*#__PURE__*/React.createElement("div", {
-      className: "m-row-sub"
-    }, p.outcome, " \xB7 ", money(p, p.capitalRisked), " \xB7 quota ", quota, "x", p.deadline ? ` · scad. ${p.deadline}` : ''), /*#__PURE__*/React.createElement("div", {
-      className: "m-card-controls"
-    }, /*#__PURE__*/React.createElement("label", {
-      className: "m-field"
-    }, /*#__PURE__*/React.createElement("span", null, "Prob. att. (ingr. ", p.entryProb, "%)"), /*#__PURE__*/React.createElement("input", {
-      type: "number",
-      inputMode: "decimal",
-      className: "input-cell",
-      value: p.currentProb,
-      onChange: e => onUpdate(p.id, 'currentProb', e.target.value)
-    })), /*#__PURE__*/React.createElement("label", {
-      className: "m-field"
-    }, /*#__PURE__*/React.createElement("span", null, "Stato"), /*#__PURE__*/React.createElement("select", {
-      value: p.status,
-      onChange: e => onClose(p.id, e.target.value),
-      className: "input-cell",
-      style: {
-        background: C.card
-      }
-    }, POSITION_STATUSES.map(s => /*#__PURE__*/React.createElement("option", {
-      key: s
-    }, s)))), /*#__PURE__*/React.createElement("button", {
-      className: "tx-action-btn danger",
-      onClick: () => onRemove(p.id),
-      "aria-label": `Elimina ${p.market}`
-    }, /*#__PURE__*/React.createElement(Ic.trash, null))));
-  })))), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-12",
-    ref: formRef,
-    style: {
-      scrollMarginTop: 80
-    }
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Aggiungi posizione"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 140px), 1fr))',
-      gap: 14,
-      alignItems: 'end'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      gridColumn: '1 / -1'
-    }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: labelStyle
-  }, "Mercato"), /*#__PURE__*/React.createElement("input", {
-    className: "input-cell",
-    placeholder: "Es. Trump wins 2028",
-    value: form.market,
-    onChange: e => setForm(f => ({
-      ...f,
-      market: e.target.value
-    }))
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: labelStyle
-  }, "Outcome"), /*#__PURE__*/React.createElement("input", {
-    className: "input-cell",
-    placeholder: "YES / NO",
-    value: form.outcome,
-    onChange: e => setForm(f => ({
-      ...f,
-      outcome: e.target.value
-    }))
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: labelStyle
-  }, "Valuta"), /*#__PURE__*/React.createElement("select", {
-    className: "input-cell",
-    value: form.currency,
-    onChange: e => setForm(f => ({
-      ...f,
-      currency: e.target.value
-    })),
-    style: {
-      background: C.card
-    }
-  }, /*#__PURE__*/React.createElement("option", null, "USDC"), /*#__PURE__*/React.createElement("option", null, "EUR"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: labelStyle
-  }, "Capitale"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    inputMode: "decimal",
-    className: "input-cell",
-    placeholder: "100",
-    value: form.capitalRisked,
-    onChange: e => setForm(f => ({
-      ...f,
-      capitalRisked: e.target.value
-    })),
-    style: {
-      textAlign: 'right'
-    }
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: labelStyle
-  }, "Prob. ingresso %"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    inputMode: "decimal",
-    className: "input-cell",
-    placeholder: "35",
-    value: form.entryProb,
-    onChange: e => setForm(f => ({
-      ...f,
-      entryProb: e.target.value
-    })),
-    style: {
-      textAlign: 'right'
-    }
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: labelStyle
-  }, "Prob. attuale %"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    inputMode: "decimal",
-    className: "input-cell",
-    placeholder: "42",
-    value: form.currentProb,
-    onChange: e => setForm(f => ({
-      ...f,
-      currentProb: e.target.value
-    })),
-    style: {
-      textAlign: 'right'
-    }
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: labelStyle
-  }, "Scadenza"), /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    className: "input-cell",
-    value: form.deadline,
-    onChange: e => setForm(f => ({
-      ...f,
-      deadline: e.target.value
-    }))
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      gridColumn: '1 / -1'
-    }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: labelStyle
-  }, "Note"), /*#__PURE__*/React.createElement("input", {
-    className: "input-label",
-    placeholder: "Tesi, fonte, link\u2026",
-    value: form.note,
-    onChange: e => setForm(f => ({
-      ...f,
-      note: e.target.value
-    }))
-  })), /*#__PURE__*/React.createElement("button", {
-    className: "btn-primary",
-    onClick: handleAdd,
-    style: {
-      justifyContent: 'center'
-    }
-  }, /*#__PURE__*/React.createElement(Ic.plus, null), " Aggiungi")), err && /*#__PURE__*/React.createElement("div", {
-    className: "inline-error",
-    role: "alert"
-  }, /*#__PURE__*/React.createElement(Ic.alert, {
-    size: 15
-  }), /*#__PURE__*/React.createElement("span", null, err))), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-6"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "Kelly Criterion (posizioni aperte)"))), open.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      color: C.textMuted,
-      fontSize: 12,
-      padding: 20,
-      textAlign: 'center'
-    }
-  }, "Nessuna posizione aperta.") : /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 10
-    }
-  }, open.map(p => {
-    const ep = p.entryProb;
-    const cp = p.currentProb;
-    const b = 100 / ep - 1;
-    const pp = cp / 100;
-    const q = 1 - pp;
-    const f = b > 0 ? (b * pp - q) / b : -1;
-    return /*#__PURE__*/React.createElement("div", {
-      key: p.id,
-      style: {
-        border: `1px solid ${C.border}`,
-        borderRadius: 6,
-        padding: 10
-      }
-    }, /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 12,
-        color: C.text,
-        marginBottom: 6,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap'
-      }
-    }, p.market), f <= 0 ? /*#__PURE__*/React.createElement("div", {
-      className: "mono-font",
-      style: {
-        fontSize: 11,
-        color: C.rust
-      }
-    }, "Non scommettere (EV negativo)") : /*#__PURE__*/React.createElement("div", {
-      className: "mono-font",
-      style: {
-        fontSize: 11,
-        color: C.sage
-      }
-    }, "Kelly: ", (f * 100).toFixed(1), "% del bankroll \xB7 Half-Kelly: ", (f * 50).toFixed(1), "%"));
-  })), /*#__PURE__*/React.createElement("p", {
-    style: {
-      marginTop: 12,
-      fontSize: 11,
-      color: C.textMuted,
-      lineHeight: 1.5
-    }
-  }, "Kelly indica la dimensione ottimale teorica della posizione per massimizzare la crescita del bankroll nel lungo periodo. Valori alti vanno dimezzati (Half-Kelly) per prudenza.")), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-6 chart-card"
-  }, /*#__PURE__*/React.createElement("h3", {
-    className: "card-title"
-  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
-    className: "diamond"
-  }, "\u25C6"), /*#__PURE__*/React.createElement("span", null, "P&L realizzato cumulativo"))), !markets.pnlHistory || markets.pnlHistory.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '32px 12px',
-      textAlign: 'center',
-      color: C.textMuted,
-      fontSize: 12
-    }
-  }, "Chiudi le prime posizioni per vedere il grafico.") : /*#__PURE__*/React.createElement(ResponsiveContainer, {
-    width: "100%",
-    height: scale.h(240, 190)
-  }, /*#__PURE__*/React.createElement(LineChart, {
-    data: markets.pnlHistory,
-    margin: scale.margin
-  }, /*#__PURE__*/React.createElement(CartesianGrid, {
-    strokeDasharray: "2 4",
-    stroke: C.border
-  }), /*#__PURE__*/React.createElement(XAxis, _extends({
-    dataKey: "date"
-  }, scale.axis, {
-    minTickGap: scale.minTickGap
-  })), /*#__PURE__*/React.createElement(YAxis, _extends({}, scale.axis, {
-    width: scale.yWidth,
-    tickFormatter: fmtTick
-  })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
-    formatter: v => fmtEUR2(v)
-  })), /*#__PURE__*/React.createElement(Line, {
-    type: "monotone",
-    dataKey: "pnl",
-    stroke: C.gold,
-    strokeWidth: 2.5,
-    dot: {
-      r: 4,
-      fill: C.gold
-    }
-  })))), /*#__PURE__*/React.createElement(SentimentPanel, {
-    onPrefill: handlePrefill
-  }), /*#__PURE__*/React.createElement("div", {
-    className: "bento-card span-12"
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 16,
-      flexWrap: 'wrap'
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: labelStyle
-  }, "Tasso EUR/USD"), /*#__PURE__*/React.createElement("input", {
-    type: "number",
-    step: "0.0001",
-    inputMode: "decimal",
-    className: "input-cell mono-font",
-    value: markets.eurUsdRate,
-    onChange: e => onUpdateRate(e.target.value),
-    style: {
-      width: 160,
-      textAlign: 'right'
-    }
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: C.textMuted,
-      flex: 1,
-      minWidth: 'min(100%, 220px)'
-    }
-  }, "Usato per convertire le posizioni USDC in EUR nei KPI. 1 EUR = ", Number(markets.eurUsdRate).toFixed(4), " USD."))));
-}
-
 /* ══════════ MOVIMENTI (Entrate & Uscite) ══════════ */
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const isIncomeCategory = cat => INCOME_CATEGORIES.includes(cat);
@@ -4630,6 +3757,7 @@ function TransactionFilters({
       marginBottom: 6
     }
   }, "Dal"), /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Dal",
     type: "date",
     className: "input-cell",
     value: filters.from,
@@ -4644,6 +3772,7 @@ function TransactionFilters({
       marginBottom: 6
     }
   }, "Al"), /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Al",
     type: "date",
     className: "input-cell",
     value: filters.to,
@@ -4658,6 +3787,7 @@ function TransactionFilters({
       marginBottom: 6
     }
   }, "Tipo"), /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Tipo",
     className: "input-cell",
     value: filters.type,
     onChange: e => set('type', e.target.value),
@@ -4680,6 +3810,7 @@ function TransactionFilters({
       marginBottom: 6
     }
   }, "Categoria"), /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Categoria",
     className: "input-cell",
     value: filters.category,
     onChange: e => set('category', e.target.value),
@@ -4713,6 +3844,7 @@ function TransactionFilters({
       marginBottom: 6
     }
   }, "Cerca"), /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Cerca",
     type: "text",
     className: "input-cell",
     placeholder: "Descrizione o nota\u2026",
@@ -4755,7 +3887,8 @@ function TransactionTable({
   onToggleRow,
   onToggleAll,
   allSelected,
-  someSelected
+  someSelected,
+  flashId
 }) {
   const sel = selectedIds || new Set();
   /* Raggruppamento per mese, non per giorno: in un registro personale i
@@ -4858,7 +3991,8 @@ function TransactionTable({
     }
   }, /*#__PURE__*/React.createElement(Ic.alert, null)), "Nessun movimento \u2014 aggiungine uno o azzera i filtri."))), rows.map(t => /*#__PURE__*/React.createElement("tr", {
     key: t.id,
-    className: sel.has(t.id) ? 'selected' : ''
+    "data-saved-id": t.id,
+    className: `${sel.has(t.id) ? 'selected' : ''} ${t.id === flashId ? 'just-saved' : ''}`
   }, /*#__PURE__*/React.createElement("td", {
     className: "sel"
   }, /*#__PURE__*/React.createElement("input", {
@@ -4935,7 +4069,8 @@ function TransactionTable({
     }
   }, "saldo ", g.net >= 0 ? '+' : '−', fmt(Math.abs(g.net)))), g.items.map(t => /*#__PURE__*/React.createElement("article", {
     key: t.id,
-    className: `tx-row ${sel.has(t.id) ? 'selected' : ''}`
+    "data-saved-id": t.id,
+    className: `tx-row ${sel.has(t.id) ? 'selected' : ''} ${t.id === flashId ? 'just-saved' : ''}`
   }, /*#__PURE__*/React.createElement("input", {
     type: "checkbox",
     className: "tx-row-check",
@@ -5092,6 +4227,7 @@ function TransactionModal({
   }, /*#__PURE__*/React.createElement("div", {
     className: "modal-field"
   }, /*#__PURE__*/React.createElement("label", null, "Importo (\u20AC)"), /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Importo (\u20AC)",
     type: "number",
     min: "0.01",
     step: "0.01",
@@ -5106,6 +4242,7 @@ function TransactionModal({
   })), /*#__PURE__*/React.createElement("div", {
     className: "modal-field"
   }, /*#__PURE__*/React.createElement("label", null, "Data"), /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Data",
     type: "date",
     className: "input-cell",
     value: form.date,
@@ -5114,6 +4251,7 @@ function TransactionModal({
   })), /*#__PURE__*/React.createElement("div", {
     className: "modal-field"
   }, /*#__PURE__*/React.createElement("label", null, "Categoria"), /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Categoria",
     className: "input-cell",
     value: form.category,
     onChange: e => upd('category', e.target.value),
@@ -5126,6 +4264,7 @@ function TransactionModal({
   }, c)))), /*#__PURE__*/React.createElement("div", {
     className: "modal-field"
   }, /*#__PURE__*/React.createElement("label", null, "Metodo di pagamento"), /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Metodo di pagamento",
     className: "input-cell",
     value: form.paymentMethod,
     onChange: e => upd('paymentMethod', e.target.value),
@@ -5138,6 +4277,7 @@ function TransactionModal({
   }, m))))), /*#__PURE__*/React.createElement("div", {
     className: "modal-field"
   }, /*#__PURE__*/React.createElement("label", null, "Descrizione"), /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Descrizione",
     type: "text",
     className: "input-cell",
     placeholder: "Es. Spesa settimanale supermercato",
@@ -5147,6 +4287,7 @@ function TransactionModal({
   })), /*#__PURE__*/React.createElement("div", {
     className: "modal-field"
   }, /*#__PURE__*/React.createElement("label", null, "Stato"), /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Stato",
     className: "input-cell",
     value: form.status,
     onChange: e => upd('status', e.target.value),
@@ -5159,6 +4300,7 @@ function TransactionModal({
   }, s)))), /*#__PURE__*/React.createElement("div", {
     className: "modal-field"
   }, /*#__PURE__*/React.createElement("label", null, "Note (facoltativo)"), /*#__PURE__*/React.createElement("textarea", {
+    "aria-label": "Note (facoltativo)",
     className: "input-cell",
     rows: 3,
     placeholder: "Dettagli aggiuntivi\u2026",
@@ -5655,6 +4797,7 @@ function TransactionsTab({
     dir: 'desc'
   });
   const [modal, setModal] = useState(null); // null | { kind:'add'|'edit'|'import', tx? }
+  const [flashId, flash] = useSavedFlash();
   const [selected, setSelected] = useState(() => new Set());
   const [filterSheet, setFilterSheet] = useState(false);
   const activeFilterCount = ['from', 'to', 'query'].filter(k => filters[k]).length + (filters.type !== 'all' ? 1 : 0) + (filters.category !== 'all' ? 1 : 0);
@@ -5719,8 +4862,14 @@ function TransactionsTab({
     return true;
   };
   const handleSave = payload => {
-    if (modal && modal.kind === 'edit') onUpdate(modal.tx.id, payload);else onAdd(payload);
+    // L'id nasce qui, così la riga nuova si può ritrovare e far brillare
+    const id = modal && modal.kind === 'edit' ? modal.tx.id : Date.now();
+    if (modal && modal.kind === 'edit') onUpdate(id, payload);else onAdd({
+      ...payload,
+      id
+    });
     setModal(null);
+    flash(id);
   };
   return /*#__PURE__*/React.createElement("div", {
     className: "bento"
@@ -5897,7 +5046,8 @@ function TransactionsTab({
     onToggleRow: toggleRow,
     onToggleAll: toggleAll,
     allSelected: allSelected,
-    someSelected: someSelected
+    someSelected: someSelected,
+    flashId: flashId
   })), modal && (modal.kind === 'add' || modal.kind === 'edit') && /*#__PURE__*/React.createElement(TransactionModal, {
     key: modal.kind === 'edit' ? modal.tx.id : 'new',
     initial: modal.kind === 'edit' ? modal.tx : null,
@@ -6120,82 +5270,6 @@ function FinanceDashboard() {
       }
     }));
   }, []);
-  const addPolyPosition = useCallback(pos => {
-    setData(prev => ({
-      ...prev,
-      markets: {
-        ...prev.markets,
-        polyPositions: [...prev.markets.polyPositions, {
-          ...pos,
-          id: Date.now()
-        }]
-      }
-    }));
-    showToast('Posizione aggiunta');
-  }, [showToast]);
-  const updatePolyPosition = useCallback((id, field, value) => {
-    setData(prev => {
-      const strFields = ['market', 'outcome', 'currency', 'status', 'deadline', 'note'];
-      return {
-        ...prev,
-        markets: {
-          ...prev.markets,
-          polyPositions: prev.markets.polyPositions.map(x => x.id === id ? {
-            ...x,
-            [field]: strFields.includes(field) ? value : Number(value) || 0
-          } : x)
-        }
-      };
-    });
-  }, []);
-  const removePolyPosition = useCallback(id => {
-    setData(prev => ({
-      ...prev,
-      markets: {
-        ...prev.markets,
-        polyPositions: prev.markets.polyPositions.filter(x => x.id !== id)
-      }
-    }));
-  }, []);
-  const closePolyPosition = useCallback((id, status) => {
-    setData(prev => {
-      const pos = prev.markets.polyPositions.find(x => x.id === id);
-      if (!pos) return prev;
-      const wasOpen = pos.status === 'Aperta' || pos.status === 'Chiusa';
-      const becameResolved = status === 'Vinta' || status === 'Persa';
-      const updated = prev.markets.polyPositions.map(x => x.id === id ? {
-        ...x,
-        status
-      } : x);
-      let hist = prev.markets.pnlHistory;
-      if (becameResolved && wasOpen) {
-        const realized = status === 'Vinta' ? pos.capitalRisked * ((100 - pos.entryProb) / Math.max(1, pos.entryProb)) : -pos.capitalRisked;
-        const month = new Date().toISOString().slice(0, 7);
-        const prevCum = hist.length ? hist[hist.length - 1].pnl : 0;
-        hist = [...hist, {
-          date: month,
-          pnl: prevCum + realized
-        }];
-      }
-      return {
-        ...prev,
-        markets: {
-          ...prev.markets,
-          polyPositions: updated,
-          pnlHistory: hist
-        }
-      };
-    });
-  }, []);
-  const updateEurUsd = useCallback(rate => {
-    setData(prev => ({
-      ...prev,
-      markets: {
-        ...prev.markets,
-        eurUsdRate: Number(rate) || 1
-      }
-    }));
-  }, []);
 
   /* Sull'app installata su iPhone un download da blob apre un'anteprima senza
      via d'uscita: il foglio di condivisione invece offre "Salva su File".
@@ -6280,7 +5354,7 @@ function FinanceDashboard() {
       ...prev,
       transactions: [...(prev.transactions || []), {
         ...tx,
-        id: Date.now(),
+        id: tx.id || Date.now(),
         createdAt: now,
         updatedAt: now
       }]
@@ -6363,10 +5437,6 @@ function FinanceDashboard() {
     id: 'investments',
     label: 'Investimenti',
     icon: Ic.trend
-  }, {
-    id: 'markets',
-    label: 'Mercati',
-    icon: Ic.candle
   }, {
     id: 'projection',
     label: 'Proiezioni',
@@ -6871,10 +5941,10 @@ function FinanceDashboard() {
     width: narrow ? 64 : 80
   })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_BAR, {
     formatter: v => fmt(v)
-  })), /*#__PURE__*/React.createElement(Bar, {
+  })), /*#__PURE__*/React.createElement(Bar, _extends({}, CHART_ANIM, {
     dataKey: "value",
     radius: [0, 6, 6, 0]
-  }, barData.map((_, i) => /*#__PURE__*/React.createElement(Cell, {
+  }), barData.map((_, i) => /*#__PURE__*/React.createElement(Cell, {
     key: i,
     fill: `url(#barGrad${i})`
   })))))), /*#__PURE__*/React.createElement("div", {
@@ -6928,14 +5998,14 @@ function FinanceDashboard() {
   })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
     formatter: v => fmt(v),
     labelFormatter: l => `Mese ${l}`
-  })), /*#__PURE__*/React.createElement(Line, {
+  })), /*#__PURE__*/React.createElement(Line, _extends({}, CHART_ANIM, {
     type: "monotone",
     dataKey: "netWorth",
     stroke: C.gold,
     strokeWidth: 2.5,
     dot: false,
     name: "Patrimonio"
-  })))), /*#__PURE__*/React.createElement("div", {
+  }))))), /*#__PURE__*/React.createElement("div", {
     className: "bento-card span-5 row-2"
   }, /*#__PURE__*/React.createElement("h3", {
     className: "card-title"
@@ -7063,6 +6133,7 @@ function FinanceDashboard() {
       textTransform: 'uppercase'
     }
   }, "Liquidita attuale"), /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Liquidita attuale",
     type: "number",
     value: data.liquidity.current,
     onChange: e => updateLiquidity('current', e.target.value),
@@ -7083,6 +6154,7 @@ function FinanceDashboard() {
       textTransform: 'uppercase'
     }
   }, "Target fondo emergenza"), /*#__PURE__*/React.createElement("input", {
+    "aria-label": "Target fondo emergenza",
     type: "number",
     value: data.liquidity.targetEmergency,
     onChange: e => updateLiquidity('targetEmergency', e.target.value),
@@ -7216,13 +6288,6 @@ function FinanceDashboard() {
     onAddItem: addItem,
     onRemoveItem: removeItem,
     onUpdateTarget: updateInvestmentTarget
-  }), activeTab === 'markets' && /*#__PURE__*/React.createElement(MarketsTab, {
-    markets: data.markets,
-    onAdd: addPolyPosition,
-    onUpdate: updatePolyPosition,
-    onRemove: removePolyPosition,
-    onClose: closePolyPosition,
-    onUpdateRate: updateEurUsd
   }), activeTab === 'projection' && (() => {
     const growthAt = point => point && totals.netWorth > 0 ? (point.netWorth - totals.netWorth) / totals.netWorth : 0;
     const signedPct = g => `${g >= 0 ? '+' : '−'}${fmtPct(Math.abs(g))}`;
@@ -7310,28 +6375,28 @@ function FinanceDashboard() {
     })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
       formatter: v => fmt(v),
       labelFormatter: l => `Mese ${l}`
-    })), /*#__PURE__*/React.createElement(Line, {
+    })), /*#__PURE__*/React.createElement(Line, _extends({}, CHART_ANIM, {
       type: "monotone",
       dataKey: "liquidity",
       stroke: C.textDim,
       strokeWidth: 2,
       name: "Liquidita",
       dot: false
-    }), /*#__PURE__*/React.createElement(Line, {
+    })), /*#__PURE__*/React.createElement(Line, _extends({}, CHART_ANIM, {
       type: "monotone",
       dataKey: "investments",
       stroke: C.rust,
       strokeWidth: 2,
       name: "Investimenti",
       dot: false
-    }), /*#__PURE__*/React.createElement(Line, {
+    })), /*#__PURE__*/React.createElement(Line, _extends({}, CHART_ANIM, {
       type: "monotone",
       dataKey: "netWorth",
       stroke: C.gold,
       strokeWidth: 3,
       name: "Patrimonio totale",
       dot: false
-    })))));
+    }))))));
   })(), activeTab === 'mortgage' && (() => {
     const m = data.mortgage || {};
     const payA = monthlyPayment(m.amount, m.rate, m.years);
@@ -7394,6 +6459,7 @@ function FinanceDashboard() {
         gap: 6
       }
     }, /*#__PURE__*/React.createElement("input", {
+      "aria-label": label,
       type: "number",
       step: step,
       className: "input-cell mono-font",
@@ -7555,21 +6621,21 @@ function FinanceDashboard() {
     })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
       formatter: v => fmt(v),
       labelFormatter: l => `Anno ${l}`
-    })), /*#__PURE__*/React.createElement(Line, {
+    })), /*#__PURE__*/React.createElement(Line, _extends({}, CHART_ANIM, {
       type: "monotone",
       dataKey: "residuo",
       stroke: C.gold,
       strokeWidth: 3,
       name: "Capitale residuo",
       dot: false
-    }), /*#__PURE__*/React.createElement(Line, {
+    })), /*#__PURE__*/React.createElement(Line, _extends({}, CHART_ANIM, {
       type: "monotone",
       dataKey: "interessi",
       stroke: C.rust,
       strokeWidth: 2,
       name: "Interessi cumulati",
       dot: false
-    })))), /*#__PURE__*/React.createElement("div", {
+    }))))), /*#__PURE__*/React.createElement("div", {
       className: "bento-card span-12"
     }, /*#__PURE__*/React.createElement("h3", {
       className: "card-title"
@@ -7908,8 +6974,9 @@ function FinanceDashboard() {
       width: scale.yWidth,
       tickFormatter: fmtTick
     })), /*#__PURE__*/React.createElement(Tooltip, _extends({}, TT_LINE, {
-      formatter: v => fmt(v)
-    })), /*#__PURE__*/React.createElement(Line, {
+      formatter: v => fmt(v),
+      labelFormatter: itMonthLabel
+    })), /*#__PURE__*/React.createElement(Line, _extends({}, CHART_ANIM, {
       type: "monotone",
       dataKey: "netWorth",
       stroke: C.gold,
@@ -7918,7 +6985,7 @@ function FinanceDashboard() {
       dot: {
         r: 4
       }
-    }), /*#__PURE__*/React.createElement(Line, {
+    })), /*#__PURE__*/React.createElement(Line, _extends({}, CHART_ANIM, {
       type: "monotone",
       dataKey: "liquidity",
       stroke: C.textDim,
@@ -7927,7 +6994,7 @@ function FinanceDashboard() {
       dot: {
         r: 3
       }
-    }), /*#__PURE__*/React.createElement(Line, {
+    })), /*#__PURE__*/React.createElement(Line, _extends({}, CHART_ANIM, {
       type: "monotone",
       dataKey: "investments",
       stroke: C.sage,
@@ -7936,7 +7003,7 @@ function FinanceDashboard() {
       dot: {
         r: 3
       }
-    }))), /*#__PURE__*/React.createElement("div", {
+    })))), /*#__PURE__*/React.createElement("div", {
       className: "desktop-table",
       style: {
         overflowX: 'auto',
@@ -7968,11 +7035,10 @@ function FinanceDashboard() {
         borderBottom: `1px solid ${C.border}`
       }
     }, /*#__PURE__*/React.createElement("td", {
-      className: "mono-font",
       style: {
         padding: '10px 8px'
       }
-    }, h.date), /*#__PURE__*/React.createElement("td", {
+    }, itMonthLabel(h.date)), /*#__PURE__*/React.createElement("td", {
       className: "mono-font",
       style: {
         padding: '10px 8px',
