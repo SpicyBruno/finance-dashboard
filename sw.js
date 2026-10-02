@@ -1,5 +1,8 @@
 // Service worker per la PWA "Finanze"
-const CACHE = 'finanze-v5';
+// Il nome lo scrive scripts/stamp-sw.js a ogni `npm run build`: è un'impronta
+// dei file qui sotto, così ogni versione nuova cambia anche questo file e il
+// browser la installa. Non modificarlo a mano.
+const CACHE = 'finanze-1329ca8651';
 
 // Percorsi relativi alla posizione del service worker: cosi' il sito funziona
 // sia servito dalla radice sia da una sottocartella.
@@ -46,9 +49,11 @@ self.addEventListener('fetch', (e) => {
   const { request } = e;
   if (request.method !== 'GET') return;
 
-  // Le navigazioni: prova la rete, in offline ripiega sull'index in cache
+  // Le navigazioni: prova la rete, in offline ripiega sull'index in cache.
+  // no-cache come per app.js: senza, la cache HTTP poteva restituire l'index
+  // vecchio "dalla rete" e la pagina restava alla versione precedente.
   if (request.mode === 'navigate') {
-    e.respondWith(fetch(request).catch(() => caches.match(ROOT + 'index.html')));
+    e.respondWith(fetch(request, { cache: 'no-cache' }).catch(() => caches.match(ROOT + 'index.html')));
     return;
   }
 

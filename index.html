@@ -2481,12 +2481,57 @@
     });
   </script>
 
-  <!-- Registrazione del service worker per la PWA -->
+  <!-- Registrazione del service worker per la PWA, e aggiornamento.
+       Sul telefono l'app si chiude e si riapre di continuo, e a ogni apertura
+       prende la versione nuova. Sul desktop la scheda (o la finestra dell'app
+       installata) resta aperta per giorni: il browser cercava una versione
+       nuova solo a una navigazione, e la pagina già aperta teneva il codice
+       vecchio anche dopo averla trovata. Ora si controlla ogni volta che si
+       torna sulla scheda, e quando il service worker nuovo prende il comando
+       la pagina si ricarica da sola, ma mai sotto le mani mentre si scrive. -->
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function () {
-        navigator.serviceWorker.register('sw.js').catch(function (err) {
+        navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
+          var lastCheck = Date.now();
+          function check() {
+            if (Date.now() - lastCheck < 60000) return;
+            lastCheck = Date.now();
+            reg.update().catch(function () { });
+          }
+          document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') check();
+          });
+          window.addEventListener('focus', check);
+          setInterval(check, 30 * 60000);
+        }).catch(function (err) {
           console.warn('Service worker non registrato:', err);
+        });
+      });
+
+      // Alla prima installazione non c'è niente di vecchio da sostituire
+      var hadController = !!navigator.serviceWorker.controller;
+      var reloading = false;
+
+      // Con un modulo aperto o un campo attivo si aspetta che la scheda vada
+      // in secondo piano: si ricarica senza che nessuno la stia guardando
+      function busy() {
+        var el = document.activeElement;
+        return !!document.querySelector('[aria-modal="true"], .import-confirm') ||
+          !!(el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+      }
+
+      function reloadNow() {
+        if (reloading) return;
+        reloading = true;
+        location.reload();
+      }
+
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (!hadController) { hadController = true; return; }
+        if (!busy()) { reloadNow(); return; }
+        document.addEventListener('visibilitychange', function () {
+          if (document.visibilityState === 'hidden') reloadNow();
         });
       });
     }
