@@ -366,21 +366,20 @@
 
     /* ── Marchio ──
        Il simbolo dell'icona con FINANCE / ATELIER sotto, in Shippori Mincho.
-       Un solo file SVG fa da maschera: il colore lo dà il tema (oro scuro o
-       oro carta), mentre l'icona della schermata Home resta corallo. */
+       È un SVG dentro la pagina (BrandMark in src/app.jsx) e il colore lo dà
+       il tema (oro scuro o oro carta), mentre l'icona della schermata Home
+       resta corallo. Prima era brand/lockup.svg usato come maschera: aprendo
+       index.html da disco Chrome bloccava il file e il logo spariva. */
     .brand-mark {
       display: block;
       flex-shrink: 0;
-      background: var(--gold);
-      -webkit-mask: url('brand/lockup.svg') center / contain no-repeat;
-      mask: url('brand/lockup.svg') center / contain no-repeat;
+      height: auto;
+      color: var(--gold);
       /* proporzioni del file: 31.13 × 37.9 */
       aspect-ratio: 31.13 / 37.9;
     }
 
     .brand-mark.symbol {
-      -webkit-mask-image: url('brand/symbol.svg');
-      mask-image: url('brand/symbol.svg');
       aspect-ratio: 1;
     }
 
@@ -2449,6 +2448,14 @@
       background: var(--text-muted);
     }
   </style>
+
+  <!-- Aperta da disco (file://) la pagina ha origine "null" e Chrome blocca i
+       font di fonts/: l'interfaccia ripiegava sui font di sistema. Solo in quel
+       caso si aggiungono le stesse regole con i font incorporati; dal sito
+       questo file non si scarica. -->
+  <script>
+    if (location.protocol === 'file:') document.write('<script src="fonts/file-fallback.js"><\/script>');
+  </script>
 </head>
 
 <body>

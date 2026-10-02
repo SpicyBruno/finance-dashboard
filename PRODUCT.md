@@ -27,7 +27,7 @@ Built around one person's actual finances, not a generic budgeting app:
 
 ## Operating Context
 
-- Installed as a PWA on the iPhone home screen; also used in a desktop browser.
+- Installed as a PWA on the iPhone home screen; also used in a desktop browser, including by opening `index.html` straight from disk (`file://`). From disk Chrome blocks any CORS-mode load (fonts, CSS masks, fetch). That is why the logo is inline SVG and `fonts/file-fallback.js` carries embedded copies of the fonts, loaded only on `file://`. Data opened from disk lives in a separate localStorage from the hosted site's.
 - Monthly rhythm: payslip from Università Padova, monthly snapshot of net worth.
 - Frequent rhythm: logging income and expenses as they happen, or importing a bank statement (CSV, PDF or photo).
 - Holdings tracked: PIP Alleata Previdenza, Bitcoin (Crypto.com), ETF on Scalable Capital (SWDA/VWCE).

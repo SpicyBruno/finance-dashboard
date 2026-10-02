@@ -2,7 +2,7 @@
 // Il nome lo scrive scripts/stamp-sw.js a ogni `npm run build`: è un'impronta
 // dei file qui sotto, così ogni versione nuova cambia anche questo file e il
 // browser la installa. Non modificarlo a mano.
-const CACHE = 'finanze-1329ca8651';
+const CACHE = 'finanze-6779b3eee8';
 
 // Percorsi relativi alla posizione del service worker: cosi' il sito funziona
 // sia servito dalla radice sia da una sottocartella.
@@ -17,10 +17,9 @@ const ASSETS = [
   './apple-touch-icon.png',
   './favicon-32.png',
   './download (42).jpg',
-  // Marchio e font: in locale, cosi' offline non si ripiega sui font di sistema.
+  // Font: in locale, cosi' offline non si ripiega sui font di sistema.
   // I file latin-ext si mettono in cache al primo uso (cache-first piu' sotto).
-  './brand/lockup.svg',
-  './brand/symbol.svg',
+  // Il marchio non serve: e' disegnato dentro app.js.
   './fonts/hanken-grotesk-latin.woff2',
   './fonts/shippori-mincho-b1-500-latin.woff2',
   './fonts/shippori-mincho-b1-600-latin.woff2',

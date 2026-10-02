@@ -4,7 +4,7 @@
   "private": true,
   "description": "Dashboard finanziaria personale — PWA offline-first, dati in localStorage",
   "scripts": {
-    "build": "babel src/app.jsx --out-file app.js && node scripts/stamp-sw.js",
+    "build": "babel src/app.jsx --out-file app.js && node scripts/font-fallback.js && node scripts/stamp-sw.js",
     "dev": "babel src/app.jsx --out-file app.js --watch",
     "serve": "python -m http.server 8899 --bind 127.0.0.1"
   },
